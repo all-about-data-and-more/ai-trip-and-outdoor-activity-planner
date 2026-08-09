@@ -26,6 +26,7 @@ try:
 except ImportError:
     pass
 
+import agent
 import embeddings
 import embedding_job
 import lakebase
@@ -200,6 +201,83 @@ def search():
         query, trip_id=body.get("trip_id"),
         top_k=int(body.get("top_k", 8)), outdoor_only=body.get("outdoor_only"),
     )
+    return jsonify(result)
+
+
+# ---------------------------------------------------------------------------
+# Itinerary, rescheduling, packing, explanations (the agent's write tools)
+# ---------------------------------------------------------------------------
+@app.route("/trips/<trip_id>/itinerary", methods=["GET"])
+def get_itinerary(trip_id):
+    return jsonify(planner_tools.list_itinerary(trip_id))
+
+
+@app.route("/trips/<trip_id>/itinerary/generate", methods=["POST"])
+def post_generate_itinerary(trip_id):
+    body = request.json if request.is_json else {}
+    result = planner_tools.generate_itinerary(trip_id, items_per_day=int(body.get("items_per_day", 3)))
+    status = 400 if result.get("status") == "error" else 200
+    return jsonify(result), status
+
+
+@app.route("/trips/<trip_id>/reschedule", methods=["POST"])
+def post_reschedule(trip_id):
+    return jsonify(planner_tools.reschedule_for_weather(trip_id))
+
+
+@app.route("/trips/<trip_id>/packing", methods=["GET"])
+def get_packing(trip_id):
+    return jsonify(planner_tools.list_packing(trip_id))
+
+
+@app.route("/trips/<trip_id>/packing", methods=["POST"])
+def post_packing(trip_id):
+    return jsonify(planner_tools.build_packing_list(trip_id))
+
+
+@app.route("/trips/<trip_id>/explain", methods=["GET"])
+def get_explain(trip_id):
+    return jsonify(planner_tools.explain_changes(trip_id))
+
+
+@app.route("/trips/<trip_id>/itinerary/items", methods=["POST"])
+def post_itinerary_item(trip_id):
+    body = request.json if request.is_json else {}
+    title = (body.get("title") or "").strip()
+    if not title:
+        return jsonify({"error": "'title' is required"}), 400
+    return jsonify(planner_tools.add_itinerary_item(
+        trip_id, title, day_date=body.get("day_date"),
+        destination_id=body.get("destination_id"), is_outdoor=bool(body.get("is_outdoor")),
+        start_time=body.get("start_time"), end_time=body.get("end_time"), notes=body.get("notes"),
+    )), 201
+
+
+@app.route("/itinerary/items/<item_id>", methods=["DELETE"])
+def delete_itinerary_item(item_id):
+    return jsonify(planner_tools.remove_itinerary_item(item_id))
+
+
+@app.route("/itinerary/items/<item_id>/move", methods=["POST"])
+def move_itinerary_item(item_id):
+    body = request.json if request.is_json else {}
+    return jsonify(planner_tools.move_itinerary_item(
+        item_id, day_date=body.get("day_date"), start_time=body.get("start_time"),
+        end_time=body.get("end_time"), sort_order=body.get("sort_order"),
+    ))
+
+
+# ---------------------------------------------------------------------------
+# In-app agent chat
+# ---------------------------------------------------------------------------
+@app.route("/agent/chat", methods=["POST"])
+def agent_chat():
+    """Send a message to the planner agent (tool-calling over planner_tools)."""
+    body = request.json if request.is_json else {}
+    message = (body.get("message") or "").strip()
+    if not message:
+        return jsonify({"error": "'message' is required"}), 400
+    result = agent.chat(message, trip_id=body.get("trip_id"), history=body.get("history"))
     return jsonify(result)
 
 
