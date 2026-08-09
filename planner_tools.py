@@ -33,16 +33,20 @@ AQI_UNHEALTHY_THRESHOLD = float(os.environ.get("AQI_UNHEALTHY_THRESHOLD", "100")
 
 # Keyword heuristics for classifying an attraction as outdoor (drives
 # weather-based rescheduling). Deliberately simple + explainable.
+# For a WEATHER planner, "outdoor" means the visit happens largely outdoors
+# (you walk grounds/paths). Japanese temples/shrines/castles/gardens are outdoor
+# experiences, so they count as outdoor here even though they have buildings.
 _OUTDOOR_HINTS = (
-    "park", "garden", "trail", "hike", "hiking", "mountain", "lake", "beach",
-    "river", "falls", "waterfall", "zoo", "botanical", "forest", "island",
-    "bridge", "square", "plaza", "market", "harbor", "harbour", "bay", "cliff",
-    "valley", "canyon", "vineyard", "outdoor", "monument", "castle", "ruins",
+    "park", "garden", "gardens", "trail", "hike", "hiking", "mountain", "lake",
+    "beach", "river", "riverside", "falls", "waterfall", "zoo", "botanical",
+    "forest", "island", "bridge", "square", "plaza", "market", "harbor",
+    "harbour", "bay", "cliff", "valley", "canyon", "vineyard", "outdoor",
+    "monument", "castle", "ruins", "shrine", "temple", "pagoda", "gate",
+    "tower", "palace", "promenade", "viewpoint", "arboretum",
 )
 _INDOOR_HINTS = (
     "museum", "gallery", "theatre", "theater", "aquarium", "library",
-    "cathedral", "church", "temple", "shrine", "mosque", "hall", "centre",
-    "center", "mall", "palace interior", "planetarium", "observatory",
+    "cathedral", "church", "mosque", "mall", "planetarium",
 )
 
 
@@ -51,8 +55,17 @@ def _new_id() -> str:
 
 
 def _guess_outdoor(name: str, text: str | None) -> bool:
-    """Best-effort indoor/outdoor classification from the title + description."""
-    blob = f"{name or ''} {text or ''}".lower()
+    """Best-effort indoor/outdoor classification. The NAME is the strongest
+    signal (a "Park"/"Garden"/"Shrine" is outdoor regardless of what its blurb
+    mentions), so check it first; only fall back to the description when the name
+    is ambiguous — otherwise a park whose blurb name-drops a nearby museum gets
+    mis-tagged indoor."""
+    n = (name or "").lower()
+    if any(h in n for h in _OUTDOOR_HINTS):
+        return True
+    if any(h in n for h in _INDOOR_HINTS):
+        return False
+    blob = f"{n} {text or ''}".lower()
     if any(h in blob for h in _INDOOR_HINTS):
         return False
     return any(h in blob for h in _OUTDOOR_HINTS)

@@ -36,6 +36,25 @@ _USER_AGENT = os.environ.get(
 
 _HEADERS = {"User-Agent": _USER_AGENT, "Accept": "application/json"}
 
+# GeoSearch near a city centroid returns lots of non-attractions (government
+# offices, universities, stations, consulates, even historical *events*). Drop
+# titles that clearly aren't places a traveler visits, so the itinerary is built
+# from real attractions.
+_EXCLUDE_KEYWORDS = (
+    "station", "university", "college", "school", "consulate", "embassy",
+    "prefecture", "agency", "incident", "ministry", "headquarters", "hospital",
+    "office", "city council", "corporation", "company", "bombing", "attack",
+    "disaster", "ward,", "district,", "line (", "high school",
+    # events / disasters / non-places that geosearch sometimes returns
+    "fire", "revolt", "rebellion", "battle of", "riot", "massacre",
+    "earthquake", "flood", "war", "siege", "uprising",
+)
+
+
+def _is_attraction(title: str) -> bool:
+    t = (title or "").lower()
+    return not any(k in t for k in _EXCLUDE_KEYWORDS)
+
 
 def _rest_url() -> str:
     return _REST_BASE.format(lang=_LANG)
@@ -89,6 +108,9 @@ def get_nearby_attractions(lat: float, lon: float, radius_m: int = 10000, limit:
     """
     radius_m = max(10, min(int(radius_m), 10000))  # geosearch caps at 10km
     limit = max(1, min(int(limit), 50))
+    # Fetch a wider candidate pool (geosearch is distance-sorted and noisy near
+    # city centers), then filter to real attractions and keep the closest `limit`.
+    pool = min(max(limit * 5, 20), 100)
 
     try:
         geo = requests.get(
@@ -98,7 +120,7 @@ def get_nearby_attractions(lat: float, lon: float, radius_m: int = 10000, limit:
                 "list": "geosearch",
                 "gscoord": f"{lat}|{lon}",
                 "gsradius": radius_m,
-                "gslimit": limit,
+                "gslimit": pool,
                 "format": "json",
             },
             headers=_HEADERS,
@@ -110,6 +132,7 @@ def get_nearby_attractions(lat: float, lon: float, radius_m: int = 10000, limit:
         logger.warning("Wikimedia geosearch failed (%s): %s", type(exc).__name__, exc)
         return []
 
+    hits = [h for h in hits if _is_attraction(h.get("title", ""))][:limit]
     if not hits:
         return []
 
