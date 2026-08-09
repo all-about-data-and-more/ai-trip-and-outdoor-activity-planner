@@ -10,9 +10,10 @@ This is the capstone of a Databricks AI bootcamp. It is the synthesis of the ear
 Lakebase + pgvector retrieval (weather app), the FastMCP + Agent Bricks pattern (Day 3), key-less
 Open-Meteo clients (weather-mcp-server), and a Spark embedding pipeline (Day 2).
 
-> **Status:** Phase 1 (foundation) complete — data model, key-less API clients, Spark embedding
-> pipeline, retrieval, and the Flask app + UI. Phase 2 adds the agent (in-app chat + MCP server) and
-> itinerary/packing/reschedule logic. See [the plan](#roadmap).
+> **Status:** Phase 1 + Phase 2 complete — data model, key-less API clients, Spark embedding
+> pipeline, retrieval, the Flask app + UI, itinerary/reschedule/packing/explain logic, an **in-app
+> chat agent**, and a **FastMCP server** for Agent Bricks. All tool paths validated end-to-end
+> against live Lakebase.
 
 ## What it does (mapped to the bootcamp's 5 required components)
 
@@ -78,7 +79,7 @@ Import `notebooks/ingest_place_embeddings.py` and run it on a Serverless noteboo
 Delta gold embeddings table. Then call `POST /embeddings/refresh` on the app to load vectors into
 Lakebase for serving. Why the split? See [`docs/spark_pipeline_and_serverless.md`](docs/spark_pipeline_and_serverless.md).
 
-## API (Phase 1)
+## API
 
 | Method + path | Purpose |
 |---|---|
@@ -90,13 +91,35 @@ Lakebase for serving. Why the split? See [`docs/spark_pipeline_and_serverless.md
 | `GET /weather?location=`, `GET /air?location=` | raw forecast / air-quality reads |
 | `POST /embeddings/refresh` | chunk + embed new text into `place_embeddings` |
 | `POST /search` | semantic search over embedded activities |
+| `GET /trips/<id>/itinerary`, `POST …/itinerary/generate` | list / build the weather-aware itinerary |
+| `POST /trips/<id>/reschedule` | move outdoor items off rainy / poor-AQI days |
+| `GET/POST /trips/<id>/packing` | list / build the packing list |
+| `GET /trips/<id>/explain` | plain-language reasons for weather-based changes |
+| `POST /trips/<id>/itinerary/items`, `DELETE /itinerary/items/<id>`, `POST …/<id>/move` | itinerary item CRUD |
+| `POST /agent/chat` | talk to the in-app planner agent |
 
-## Roadmap
+## The agent (two surfaces, one tool layer)
 
-- **Phase 1 (done):** data model, key-less clients, Spark pipeline, embeddings + retrieval, app + UI.
-- **Phase 2:** `generate_itinerary`, `reschedule_for_weather`, `build_packing_list`,
-  `add/remove/move_itinerary_item`, `explain_changes`; the in-app chat agent (`agent.py`,
-  `/agent/chat`); the FastMCP server (`mcp_server/`) + Agent Bricks wiring; tests.
+Both surfaces call the same `planner_tools.py`, so they behave identically:
+
+- **In-app chat** — `agent.py` + `POST /agent/chat`: a Databricks Foundation Model tool-calling loop
+  (with a deterministic keyword-routing fallback if the endpoint can't tool-call on Free Edition).
+- **FastMCP server** — `mcp_server/`: exposes the tools over MCP for a Databricks **Agent Bricks**
+  agent. Deploy it as a second app and follow [`mcp_server/agent/agent_setup.md`](mcp_server/agent/agent_setup.md).
+
+> `mcp_server/` keeps its own copies of the shared modules (each Databricks App deploys from its own
+> folder). If you edit a shared module at the repo root, copy it into `mcp_server/` too:
+> `cp lakebase.py embeddings.py embedding_job.py llm.py planner_tools.py mcp_server/ && cp clients/*.py mcp_server/clients/`
+
+## Tests
+
+`tests/test_planner_tools.py` is an integration smoke test that runs the whole tool path
+(create → add destination → weather → embed → retrieve → itinerary → reschedule → packing → explain →
+CRUD) against a live Lakebase and cleans up after itself:
+
+```bash
+DATABRICKS_CONFIG_PROFILE=weather-app python tests/test_planner_tools.py
+```
 
 ## Credits &amp; data sources
 

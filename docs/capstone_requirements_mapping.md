@@ -34,23 +34,25 @@ Four **key-less** integrations (no secrets needed), each an adapter in `clients/
 ### 5. An agent that searches/retrieves AND writes to the database
 - **`planner_tools.py`** is the shared tool layer.
   - **Retrieves:** `search_activities` (pgvector), `get_forecast`, `get_air_quality`, `get_trip`,
-    `list_destinations`.
+    `list_destinations`, `list_itinerary`.
   - **Writes:** `add_destination` (inserts `destinations` + `activities`), `snapshot_weather`
-    (upserts `weather_snapshots`); Phase 2: `generate_itinerary`, `reschedule_for_weather`,
+    (upserts `weather_snapshots`), `generate_itinerary`, `reschedule_for_weather`,
     `add/remove/move_itinerary_item`, `build_packing_list`.
-- Surfaced two ways (Phase 2): the in-app chat agent (`agent.py`, `POST /agent/chat`, Foundation
-  Model tool-calling) and a FastMCP server (`mcp_server/planner_mcp_server.py`) registered as an
-  external MCP for an **Agent Bricks** agent.
+- Surfaced two ways, both over the same tool layer:
+  - **In-app chat agent** — `agent.py` + `POST /agent/chat`: a Foundation Model tool-calling loop
+    (with a deterministic keyword-routing fallback if the endpoint can't tool-call).
+  - **FastMCP server** — `mcp_server/planner_mcp_server.py`: exposes the tools over MCP for a
+    Databricks **Agent Bricks** agent (see `mcp_server/agent/agent_setup.md`).
 
 ## The project's own "Agent capabilities" spec
 
 | Capability | Implementation |
 |---|---|
-| Generate a day-by-day itinerary | `planner_tools.generate_itinerary` → `itinerary_items` *(Phase 2)* |
-| Reschedule outdoor activities on rain / poor AQI | `planner_tools.reschedule_for_weather` (reads `weather_snapshots`) *(Phase 2)* |
-| Build a packing list | `planner_tools.build_packing_list` → `packing_items` *(Phase 2)* |
-| Add / remove / move itinerary items | `planner_tools.add/remove/move_itinerary_item` *(Phase 2)* |
-| Explain weather-based changes | `planner_tools.explain_changes` (Foundation Model over snapshots) *(Phase 2)* |
+| Generate a day-by-day itinerary | `planner_tools.generate_itinerary` → `itinerary_items` ✅ |
+| Reschedule outdoor activities on rain / poor AQI | `planner_tools.reschedule_for_weather` (reads `weather_snapshots`) ✅ |
+| Build a packing list | `planner_tools.build_packing_list` → `packing_items` ✅ |
+| Add / remove / move itinerary items | `planner_tools.add/remove/move_itinerary_item` ✅ |
+| Explain weather-based changes | `planner_tools.explain_changes` (Foundation Model over snapshots) ✅ |
 | Retrieve suitable activities by interest + conditions | `planner_tools.search_activities(outdoor_only=…)` ✅ |
 
 ## The 7 required Lakebase tables
