@@ -42,18 +42,40 @@ _SCOPE = os.environ.get("LAKEBASE_SECRET_SCOPE", "database")
 _KEY = os.environ.get("LAKEBASE_SECRET_KEY", "lakebase-url")
 
 
+def _maybe_decode(value: str) -> str:
+    """Return a usable Postgres URL whether `value` is a raw URL or base64.
+
+    Databricks hands secret-backed env vars to the app base64-ENCODED, and
+    setup_secrets.py also stores the secret base64-encoded — so the same value
+    can arrive either already-decoded (a raw postgresql:// URL) or still
+    encoded, depending on the path. Detect and normalize both instead of
+    assuming, which is exactly what bit the first deploy.
+    """
+    v = (value or "").strip()
+    if v.startswith("postgres://") or v.startswith("postgresql://"):
+        return v
+    try:
+        decoded = base64.b64decode(v).decode("utf-8").strip()
+        if decoded.startswith("postgres://") or decoded.startswith("postgresql://"):
+            return decoded
+    except Exception:  # noqa: BLE001 - not base64; fall through to return as-is
+        pass
+    return v
+
+
 def _lakebase_url() -> str:
     """Resolve the Lakebase connection URL: LAKEBASE_URL env first (portable),
-    then the base64-encoded Databricks secret (needs a CLI profile / app SP)."""
+    then the Databricks secret. Both are normalized through _maybe_decode so a
+    base64-encoded value (how Databricks injects secret-backed env vars) works."""
     url = os.environ.get("LAKEBASE_URL")
     if url:
-        return url
+        return _maybe_decode(url)
 
     # Imported lazily so the env-var path doesn't require databricks-sdk.
     from databricks.sdk import WorkspaceClient
 
     secret = WorkspaceClient().secrets.get_secret(scope=_SCOPE, key=_KEY)
-    return base64.b64decode(secret.value).decode("utf-8")
+    return _maybe_decode(secret.value)
 
 
 @contextmanager
