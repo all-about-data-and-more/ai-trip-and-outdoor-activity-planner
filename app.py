@@ -158,6 +158,20 @@ def get_activities(destination_id):
     return jsonify(planner_tools.list_activities(destination_id))
 
 
+@app.route("/destinations/<destination_id>/activities", methods=["POST"])
+def post_activity(destination_id):
+    """Add a user's own activity to a destination."""
+    body = request.json if request.is_json else {}
+    name = (body.get("name") or "").strip()
+    if not name:
+        return jsonify({"error": "'name' is required"}), 400
+    return jsonify(planner_tools.add_user_activity(
+        destination_id, name, description=body.get("description"),
+        requirements=body.get("requirements"), is_outdoor=bool(body.get("is_outdoor")),
+        category=body.get("category"),
+    )), 201
+
+
 @app.route("/destinations/<destination_id>", methods=["DELETE"])
 def delete_destination_route(destination_id):
     return jsonify(planner_tools.delete_destination(destination_id))
@@ -241,6 +255,12 @@ def post_generate_itinerary(trip_id):
 @app.route("/trips/<trip_id>/reschedule", methods=["POST"])
 def post_reschedule(trip_id):
     return jsonify(planner_tools.reschedule_for_weather(trip_id))
+
+
+@app.route("/trips/<trip_id>/itinerary/reorder", methods=["POST"])
+def post_reorder(trip_id):
+    body = request.json if request.is_json else {}
+    return jsonify(planner_tools.reorder_itinerary(trip_id, body.get("item_ids") or []))
 
 
 @app.route("/trips/<trip_id>/packing", methods=["GET"])

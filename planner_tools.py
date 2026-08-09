@@ -791,6 +791,21 @@ def move_itinerary_item(item_id: str, day_date=None, start_time=None,
     return {"updated": updated, "id": item_id}
 
 
+def reorder_itinerary(trip_id: str, item_ids: list[str]) -> dict:
+    """Reorder a day's itinerary items to match the given id order (WRITE).
+    Reassigns sort_order and the time slots by position so the day reads in the
+    new sequence with sensible times. Pass one day's item ids in the wanted
+    order."""
+    for i, item_id in enumerate(item_ids):
+        slot = _SLOTS[i % len(_SLOTS)]
+        lakebase.run_write(
+            f"UPDATE {lakebase.ITINERARY_ITEMS_TABLE} SET sort_order = %s, start_time = %s, "
+            f"end_time = %s, updated_at = now() WHERE id = %s AND trip_id = %s",
+            (i, slot[0], slot[1], item_id, trip_id),
+        )
+    return {"trip_id": trip_id, "reordered": len(item_ids)}
+
+
 def explain_changes(trip_id: str) -> dict:
     """
     Explain, in plain language, the weather-based changes the agent made — the
