@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI Trip &amp; Outdoor Activity Planner</title>
+    <style>
+        :root {
+            --bg1: #0f766e; --bg2: #155e75; --card: #ffffff; --ink: #0f172a;
+            --muted: #64748b; --line: #e2e8f0; --accent: #0d9488; --accent2: #0891b2;
+            --warn: #b45309; --bad: #b91c1c; --good: #15803d; --chip: #ccfbf1;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, var(--bg1), var(--bg2));
+            min-height: 100vh; color: var(--ink); padding: 1.5rem;
+        }
+        .wrap { max-width: 1200px; margin: 0 auto; }
+        header { color: #fff; margin-bottom: 1.25rem; }
+        header h1 { font-size: 1.9rem; }
+        header p { opacity: .9; margin-top: .25rem; font-size: .95rem; }
+        .grid { display: grid; grid-template-columns: 340px 1fr; gap: 1.25rem; }
+        @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+        .card {
+            background: var(--card); border-radius: 14px; padding: 1.1rem 1.2rem;
+            box-shadow: 0 10px 30px rgba(0,0,0,.15); margin-bottom: 1.25rem;
+        }
+        .card h2 { font-size: 1.05rem; margin-bottom: .8rem; display: flex; gap: .4rem; align-items: center; }
+        label { display: block; font-size: .8rem; color: var(--muted); margin: .5rem 0 .2rem; }
+        input, textarea, select {
+            width: 100%; padding: .6rem .7rem; border: 1px solid var(--line);
+            border-radius: 8px; font-size: .92rem; font-family: inherit;
+        }
+        input:focus, textarea:focus { outline: none; border-color: var(--accent); }
+        .row { display: flex; gap: .5rem; }
+        .row > * { flex: 1; }
+        button {
+            background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #fff;
+            border: none; border-radius: 8px; padding: .6rem .9rem; font-weight: 600;
+            cursor: pointer; font-size: .9rem; transition: transform .1s, opacity .2s;
+        }
+        button:hover:not(:disabled) { transform: translateY(-1px); }
+        button:disabled { opacity: .55; cursor: not-allowed; }
+        button.ghost { background: #f1f5f9; color: var(--ink); }
+        .trip-item {
+            padding: .6rem .7rem; border: 1px solid var(--line); border-radius: 8px;
+            margin-bottom: .5rem; cursor: pointer; font-size: .9rem;
+        }
+        .trip-item.active { border-color: var(--accent); background: #f0fdfa; }
+        .muted { color: var(--muted); font-size: .85rem; }
+        .dest, .activity, .snap, .result {
+            border: 1px solid var(--line); border-radius: 10px; padding: .8rem .9rem; margin-bottom: .7rem;
+        }
+        .dest h3 { font-size: 1.05rem; }
+        .badge {
+            display: inline-block; padding: .12rem .5rem; border-radius: 999px;
+            font-size: .72rem; font-weight: 600; margin-left: .35rem;
+        }
+        .badge.out { background: #dcfce7; color: var(--good); }
+        .badge.in { background: #e0f2fe; color: var(--accent2); }
+        .snap-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: .5rem; }
+        .snap { text-align: center; }
+        .snap .d { font-weight: 600; font-size: .82rem; }
+        .snap .t { font-size: 1.05rem; margin: .2rem 0; }
+        .snap .m { font-size: .75rem; color: var(--muted); }
+        .aqi-good { color: var(--good); } .aqi-mid { color: var(--warn); } .aqi-bad { color: var(--bad); }
+        .toast {
+            position: fixed; bottom: 1rem; right: 1rem; background: var(--ink); color: #fff;
+            padding: .7rem 1rem; border-radius: 8px; font-size: .88rem; opacity: 0;
+            transition: opacity .3s; pointer-events: none; max-width: 340px;
+        }
+        .toast.show { opacity: 1; }
+        .pill { background: var(--chip); color: #0f766e; border-radius: 999px; padding: .1rem .55rem; font-size: .72rem; }
+        .stub { border: 1px dashed var(--line); border-radius: 10px; padding: 1rem; color: var(--muted); font-size: .85rem; text-align: center; }
+        .spinner { display:inline-block; width:14px; height:14px; border:2px solid #ffffff66; border-top-color:#fff; border-radius:50%; animation: spin .8s linear infinite; vertical-align:-2px; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+<div class="wrap">
+    <header>
+        <h1>🧭 AI Trip &amp; Outdoor Activity Planner</h1>
+        <p>Save destinations, and let a weather- &amp; air-quality-aware agent build your itinerary.</p>
+    </header>
+
+    <div class="grid">
+        <!-- LEFT: trips + add destination -->
+        <div>
+            <div class="card">
+                <h2>✈️ Your trips</h2>
+                <div id="trips"></div>
+                <hr style="border:none;border-top:1px solid var(--line);margin:.8rem 0" />
+                <label>New trip title</label>
+                <input id="trip-title" placeholder="Summer in Japan" />
+                <div class="row">
+                    <div><label>Start</label><input id="trip-start" type="date" /></div>
+                    <div><label>End</label><input id="trip-end" type="date" /></div>
+                </div>
+                <label>Notes / preferences (embedded for retrieval)</label>
+                <textarea id="trip-notes" rows="2" placeholder="Love hiking and food markets; avoid crowds."></textarea>
+                <div style="margin-top:.6rem"><button id="create-trip">Create trip</button></div>
+            </div>
+
+            <div class="card">
+                <h2>📍 Add a destination</h2>
+                <p class="muted" style="margin-bottom:.5rem">Auto-fetches a description (Wikimedia) and nearby attractions.</p>
+                <input id="dest-name" placeholder="Kyoto, Japan" />
+                <div class="row" style="margin-top:.5rem">
+                    <div><label>Arrive</label><input id="dest-arrive" type="date" /></div>
+                    <div><label>Depart</label><input id="dest-depart" type="date" /></div>
+                </div>
+                <div style="margin-top:.6rem"><button id="add-dest" disabled>Add destination</button></div>
+            </div>
+
+            <div class="card">
+                <h2>🔎 Find activities</h2>
+                <p class="muted" style="margin-bottom:.5rem">Semantic search over embedded attractions.</p>
+                <input id="search-q" placeholder="quiet gardens and temples" />
+                <div class="row" style="margin-top:.5rem">
+                    <button id="do-search" disabled>Search</button>
+                    <button id="do-embed" class="ghost" disabled>Refresh embeddings</button>
+                </div>
+                <div id="search-results" style="margin-top:.7rem"></div>
+            </div>
+        </div>
+
+        <!-- RIGHT: destinations, weather, (Phase 2) itinerary/packing/chat -->
+        <div>
+            <div class="card">
+                <h2 id="current-trip-title">Select or create a trip</h2>
+                <div id="destinations"><p class="muted">No trip selected yet.</p></div>
+            </div>
+
+            <div class="card">
+                <h2>🗓️ Itinerary &amp; packing <span class="pill">agent</span></h2>
+                <div class="stub">
+                    The agent builds a day-by-day itinerary, reschedules outdoor activities on rain/poor air
+                    quality, and generates a packing list here. (Wired in Phase 2.)
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>💬 Plan with the agent <span class="pill">chat</span></h2>
+                <div class="stub">Chat with the planner agent here — coming in Phase 2.</div>
+            </div>
+        </div>
+    </div>
+</div>
+<div id="toast" class="toast"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let currentTrip = null;
+
+function toast(msg) {
+    const t = $("toast"); t.textContent = msg; t.classList.add("show");
+    setTimeout(() => t.classList.remove("show"), 3200);
+}
+async function api(path, opts = {}) {
+    const res = await fetch(path, {
+        headers: { "Content-Type": "application/json" },
+        ...opts,
+        body: opts.body ? JSON.stringify(opts.body) : undefined,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+    return data;
+}
+function aqiClass(aqi) {
+    if (aqi == null) return "";
+    if (aqi <= 50) return "aqi-good";
+    if (aqi <= 100) return "aqi-mid";
+    return "aqi-bad";
+}
+
+async function loadTrips() {
+    const trips = await api("/trips");
+    const el = $("trips");
+    if (!trips.length) { el.innerHTML = '<p class="muted">No trips yet — create one below.</p>'; return; }
+    el.innerHTML = trips.map(t => `
+        <div class="trip-item ${currentTrip && currentTrip.id === t.id ? 'active' : ''}" data-id="${t.id}">
+            <strong>${t.title}</strong>
+            <div class="muted">${t.start_date || ''}${t.end_date ? ' → ' + t.end_date : ''}</div>
+        </div>`).join("");
+    el.querySelectorAll(".trip-item").forEach(n =>
+        n.addEventListener("click", () => selectTrip(n.dataset.id)));
+}
+
+async function selectTrip(id) {
+    currentTrip = await api(`/trips/${id}`);
+    $("current-trip-title").textContent = `📍 ${currentTrip.title}`;
+    ["add-dest", "do-search", "do-embed"].forEach(b => $(b).disabled = false);
+    await loadTrips();
+    renderDestinations();
+}
+
+function renderDestinations() {
+    const el = $("destinations");
+    const dests = (currentTrip && currentTrip.destinations) || [];
+    if (!dests.length) { el.innerHTML = '<p class="muted">No destinations yet — add one on the left.</p>'; return; }
+    el.innerHTML = dests.map(d => `
+        <div class="dest">
+            <h3>${d.name}</h3>
+            <p class="muted">${(d.description || 'No description.').slice(0, 220)}${(d.description||'').length > 220 ? '…' : ''}</p>
+            <div style="margin-top:.5rem" class="row">
+                <button class="ghost" onclick="loadWeather('${d.id}')">🌦️ Weather &amp; air</button>
+                <button class="ghost" onclick="loadActivities('${d.id}')">🎯 Activities</button>
+            </div>
+            <div id="wx-${d.id}" style="margin-top:.6rem"></div>
+            <div id="act-${d.id}" style="margin-top:.6rem"></div>
+        </div>`).join("");
+}
+
+async function loadWeather(destId) {
+    const box = $(`wx-${destId}`);
+    box.innerHTML = '<span class="spinner"></span> fetching forecast + air quality…';
+    try {
+        const r = await api(`/destinations/${destId}/weather`, { method: "POST", body: { days: 7 } });
+        box.innerHTML = '<div class="snap-grid">' + r.snapshots.map(s => `
+            <div class="snap">
+                <div class="d">${s.date.slice(5)}</div>
+                <div class="t">${s.temp_high ?? '–'}° / ${s.temp_low ?? '–'}°</div>
+                <div class="m">${s.conditions || ''}</div>
+                <div class="m">💧 ${s.precip_chance_pct ?? 0}%</div>
+                <div class="m ${aqiClass(s.aqi)}">AQI ${s.aqi != null ? Math.round(s.aqi) : '–'}</div>
+            </div>`).join("") + '</div>';
+    } catch (e) { box.innerHTML = `<span class="muted">${e.message}</span>`; }
+}
+
+async function loadActivities(destId) {
+    const box = $(`act-${destId}`);
+    box.innerHTML = '<span class="spinner"></span> loading…';
+    const acts = await api(`/destinations/${destId}/activities`);
+    if (!acts.length) { box.innerHTML = '<p class="muted">No activities yet.</p>'; return; }
+    box.innerHTML = acts.map(a => `
+        <div class="activity">
+            <strong>${a.name}</strong>
+            <span class="badge ${a.is_outdoor ? 'out' : 'in'}">${a.is_outdoor ? 'outdoor' : 'indoor'}</span>
+            <div class="muted">${(a.description || '').slice(0, 140)}</div>
+        </div>`).join("");
+}
+
+$("create-trip").addEventListener("click", async () => {
+    const title = $("trip-title").value.trim();
+    if (!title) return toast("Enter a trip title");
+    const t = await api("/trips", { method: "POST", body: {
+        title, start_date: $("trip-start").value || null,
+        end_date: $("trip-end").value || null, notes: $("trip-notes").value || null,
+    }});
+    $("trip-title").value = $("trip-notes").value = "";
+    toast("Trip created");
+    await selectTrip(t.id);
+});
+
+$("add-dest").addEventListener("click", async () => {
+    const name = $("dest-name").value.trim();
+    if (!name || !currentTrip) return toast("Select a trip and enter a destination");
+    const btn = $("add-dest"); btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> adding…';
+    try {
+        const d = await api(`/trips/${currentTrip.id}/destinations`, { method: "POST", body: {
+            name, arrival_date: $("dest-arrive").value || null, depart_date: $("dest-depart").value || null,
+        }});
+        toast(`Added ${d.name} (+${d.activities_created} activities)`);
+        $("dest-name").value = "";
+        currentTrip = await api(`/trips/${currentTrip.id}`);
+        renderDestinations();
+    } catch (e) { toast(e.message); }
+    finally { btn.disabled = false; btn.textContent = "Add destination"; }
+});
+
+$("do-embed").addEventListener("click", async () => {
+    const btn = $("do-embed"); btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>';
+    try {
+        const r = await api("/embeddings/refresh", { method: "POST", body: {} });
+        toast(`Embedded ${r.sources_embedded} sources → ${r.rows_written} chunks`);
+    } catch (e) { toast(e.message); }
+    finally { btn.disabled = false; btn.textContent = "Refresh embeddings"; }
+});
+
+$("do-search").addEventListener("click", async () => {
+    const query = $("search-q").value.trim();
+    if (!query) return toast("Enter a search query");
+    const r = await api("/search", { method: "POST", body: {
+        query, trip_id: currentTrip ? currentTrip.id : null, top_k: 8,
+    }});
+    const box = $("search-results");
+    if (!r.results || !r.results.length) { box.innerHTML = '<p class="muted">No matches. Add destinations and Refresh embeddings first.</p>'; return; }
+    box.innerHTML = r.results.map(x => `
+        <div class="result">
+            <strong>${x.name}</strong>
+            <span class="badge ${x.is_outdoor ? 'out' : 'in'}">${x.is_outdoor ? 'outdoor' : 'indoor'}</span>
+            <span class="pill">${(x.similarity * 100).toFixed(0)}%</span>
+            <div class="muted">${x.destination_name} — ${(x.description || '').slice(0, 120)}</div>
+        </div>`).join("");
+});
+
+loadTrips();
+</script>
+</body>
+</html>
