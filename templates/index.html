@@ -45,9 +45,18 @@
         button.ghost { background: #f1f5f9; color: var(--ink); }
         .trip-item {
             padding: .6rem .7rem; border: 1px solid var(--line); border-radius: 8px;
-            margin-bottom: .5rem; cursor: pointer; font-size: .9rem;
+            margin-bottom: .5rem; font-size: .9rem;
+            display: flex; align-items: center; justify-content: space-between; gap: .5rem;
         }
         .trip-item.active { border-color: var(--accent); background: #f0fdfa; }
+        .trip-item .ti-main { flex: 1; min-width: 0; cursor: pointer; }
+        .ti-actions { display: flex; gap: .25rem; flex: 0 0 auto; }
+        .mini { background: #f1f5f9; color: var(--muted); padding: .15rem .45rem; font-size: .8rem; border-radius: 6px; }
+        .mini:hover:not(:disabled) { background: #e2e8f0; }
+        .dest-head { display: flex; align-items: start; justify-content: space-between; gap: .5rem; }
+        .pack-item { display: flex; align-items: center; gap: .45rem; cursor: pointer; }
+        .pack-item.packed { text-decoration: line-through; opacity: .55; }
+        .pack-item input { width: auto; }
         .muted { color: var(--muted); font-size: .85rem; }
         .dest, .activity, .snap, .result {
             border: 1px solid var(--line); border-radius: 10px; padding: .8rem .9rem; margin-bottom: .7rem;
@@ -112,7 +121,10 @@
                 </div>
                 <label>Notes / preferences (embedded for retrieval)</label>
                 <textarea id="trip-notes" rows="2" placeholder="Love hiking and food markets; avoid crowds."></textarea>
-                <div style="margin-top:.6rem"><button id="create-trip">Create trip</button></div>
+                <div style="margin-top:.6rem" class="row">
+                    <button id="create-trip">Create trip</button>
+                    <button id="cancel-edit" class="ghost" style="display:none;flex:0 0 auto">Cancel</button>
+                </div>
             </div>
 
             <div class="card">
@@ -175,6 +187,12 @@
 <script>
 const $ = (id) => document.getElementById(id);
 let currentTrip = null;
+let editingTripId = null;
+
+// Flask serializes DATE as an HTTP-date ("Tue, 11 Aug 2026 00:00:00 GMT");
+// normalize for display and for <input type="date"> (which wants YYYY-MM-DD).
+function fmtDate(v) { if (!v) return ''; const d = new Date(v); return isNaN(d) ? '' : d.toLocaleDateString(); }
+function toDateInput(v) { if (!v) return ''; const d = new Date(v); return isNaN(d) ? '' : d.toISOString().slice(0, 10); }
 
 function toast(msg) {
     const t = $("toast"); t.textContent = msg; t.classList.add("show");
@@ -203,11 +221,21 @@ async function loadTrips() {
     if (!trips.length) { el.innerHTML = '<p class="muted">No trips yet — create one below.</p>'; return; }
     el.innerHTML = trips.map(t => `
         <div class="trip-item ${currentTrip && currentTrip.id === t.id ? 'active' : ''}" data-id="${t.id}">
-            <strong>${t.title}</strong>
-            <div class="muted">${t.start_date || ''}${t.end_date ? ' → ' + t.end_date : ''}</div>
+            <div class="ti-main">
+                <strong>${t.title}</strong>
+                <div class="muted">${fmtDate(t.start_date)}${t.end_date ? ' → ' + fmtDate(t.end_date) : ''}</div>
+            </div>
+            <div class="ti-actions">
+                <button class="mini" data-edit title="Edit">✎</button>
+                <button class="mini" data-del title="Delete">🗑</button>
+            </div>
         </div>`).join("");
-    el.querySelectorAll(".trip-item").forEach(n =>
-        n.addEventListener("click", () => selectTrip(n.dataset.id)));
+    el.querySelectorAll(".trip-item").forEach(n => {
+        const id = n.dataset.id;
+        n.querySelector(".ti-main").addEventListener("click", () => selectTrip(id));
+        n.querySelector("[data-edit]").addEventListener("click", (e) => { e.stopPropagation(); editTrip(id); });
+        n.querySelector("[data-del]").addEventListener("click", (e) => { e.stopPropagation(); deleteTrip(id); });
+    });
 }
 
 async function selectTrip(id) {
@@ -227,7 +255,10 @@ function renderDestinations() {
     if (!dests.length) { el.innerHTML = '<p class="muted">No destinations yet — add one on the left.</p>'; return; }
     el.innerHTML = dests.map(d => `
         <div class="dest">
-            <h3>${d.name}</h3>
+            <div class="dest-head">
+                <h3>${d.name}</h3>
+                <button class="x" title="Remove destination" onclick="deleteDest('${d.id}')">✕</button>
+            </div>
             <p class="muted">${(d.description || 'No description.').slice(0, 220)}${(d.description||'').length > 220 ? '…' : ''}</p>
             <div style="margin-top:.5rem" class="row">
                 <button class="ghost" onclick="loadWeather('${d.id}')">🌦️ Weather &amp; air</button>
@@ -267,18 +298,76 @@ async function loadActivities(destId) {
         </div>`).join("");
 }
 
+function clearTripForm() {
+    $("trip-title").value = $("trip-notes").value = $("trip-start").value = $("trip-end").value = "";
+}
+function cancelEdit() {
+    editingTripId = null;
+    clearTripForm();
+    $("create-trip").textContent = "Create trip";
+    $("cancel-edit").style.display = "none";
+}
+async function editTrip(id) {
+    const t = await api(`/trips/${id}`);
+    $("trip-title").value = t.title || "";
+    $("trip-start").value = toDateInput(t.start_date);
+    $("trip-end").value = toDateInput(t.end_date);
+    $("trip-notes").value = t.notes || "";
+    editingTripId = id;
+    $("create-trip").textContent = "Save changes";
+    $("cancel-edit").style.display = "";
+    window.scrollTo({ top: 0, behavior: "smooth" });
+}
+async function deleteTrip(id) {
+    if (!confirm("Delete this trip and everything in it (destinations, itinerary, packing)? This can't be undone.")) return;
+    try {
+        await api(`/trips/${id}`, { method: "DELETE" });
+        toast("Trip deleted");
+        if (editingTripId === id) cancelEdit();
+        if (currentTrip && currentTrip.id === id) {
+            currentTrip = null;
+            $("current-trip-title").textContent = "Select or create a trip";
+            $("destinations").innerHTML = '<p class="muted">No trip selected yet.</p>';
+            $("itinerary").innerHTML = ''; $("packing").innerHTML = ''; $("explain-box").innerHTML = '';
+            ["add-dest","do-search","do-embed","gen-itin","reschedule","build-pack","explain","chat-input","chat-send"]
+                .forEach(b => $(b).disabled = true);
+        }
+        loadTrips();
+    } catch (e) { toast(e.message); }
+}
+async function deleteDest(id) {
+    if (!currentTrip || !confirm("Remove this destination and its activities?")) return;
+    try {
+        await api(`/destinations/${id}`, { method: "DELETE" });
+        toast("Destination removed");
+        currentTrip = await api(`/trips/${currentTrip.id}`);
+        renderDestinations();
+        loadItinerary();
+    } catch (e) { toast(e.message); }
+}
+
+$("cancel-edit").addEventListener("click", cancelEdit);
 $("create-trip").addEventListener("click", async () => {
     const title = $("trip-title").value.trim();
     if (!title) return toast("Enter a trip title");
     const btn = $("create-trip"); btn.disabled = true;
+    const body = {
+        title, start_date: $("trip-start").value || null,
+        end_date: $("trip-end").value || null, notes: $("trip-notes").value || null,
+    };
     try {
-        const t = await api("/trips", { method: "POST", body: {
-            title, start_date: $("trip-start").value || null,
-            end_date: $("trip-end").value || null, notes: $("trip-notes").value || null,
-        }});
-        $("trip-title").value = $("trip-notes").value = "";
-        toast("Trip created");
-        await selectTrip(t.id);
+        if (editingTripId) {
+            const id = editingTripId;
+            await api(`/trips/${id}`, { method: "PATCH", body });
+            cancelEdit();
+            toast("Trip updated");
+            await selectTrip(id);
+        } else {
+            const t = await api("/trips", { method: "POST", body });
+            clearTripForm();
+            toast("Trip created");
+            await selectTrip(t.id);
+        }
     } catch (e) { toast(e.message); }
     finally { btn.disabled = false; }
 });
@@ -364,8 +453,18 @@ async function loadPacking() {
     for (const p of items) (cats[p.category || 'other'] = cats[p.category || 'other'] || []).push(p);
     box.innerHTML = '<div class="pack-h">🎒 Packing list</div>' + Object.keys(cats).sort().map(c => `
         <div class="pack-cat"><span class="pill">${c}</span>
-            ${cats[c].map(p => `<div class="pack-item">${p.item}${p.reason ? ` <span class="muted">— ${p.reason}</span>` : ''}</div>`).join('')}
+            ${cats[c].map(p => `
+                <label class="pack-item ${p.packed ? 'packed' : ''}">
+                    <input type="checkbox" ${p.packed ? 'checked' : ''} onchange="togglePack('${p.id}', this.checked, this)">
+                    <span>${p.item}${p.reason ? ` <span class="muted">— ${p.reason}</span>` : ''}</span>
+                </label>`).join('')}
         </div>`).join('');
+}
+async function togglePack(id, packed, input) {
+    try {
+        await api(`/packing/items/${id}/toggle`, { method: "POST", body: { packed } });
+        input.closest(".pack-item").classList.toggle("packed", packed);
+    } catch (e) { toast(e.message); input.checked = !packed; }
 }
 async function removeItem(id) {
     await api(`/itinerary/items/${id}`, { method: "DELETE" });
