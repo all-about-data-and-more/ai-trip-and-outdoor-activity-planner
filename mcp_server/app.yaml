@@ -1,0 +1,25 @@
+command:
+  - "python"
+  - "planner_mcp_server.py"
+
+# Same single secret as the main app — the Lakebase URL. Every data source
+# (Open-Meteo, Wikimedia) is key-less, so there is nothing else to configure.
+env:
+  - name: LAKEBASE_SECRET_SCOPE
+    value: "database"
+  - name: LAKEBASE_SECRET_KEY
+    value: "lakebase-url"
+  - name: PLANNER_EXPLAIN_MODEL
+    value: "databricks-meta-llama-3-1-8b-instruct"
+  - name: WEATHER_TEMPERATURE_UNIT
+    value: "fahrenheit"
+  - name: WEATHER_WIND_SPEED_UNIT
+    value: "mph"
+  - name: WEATHER_PRECIPITATION_UNIT
+    value: "inch"
+  - name: RAIN_PRECIP_CHANCE_PCT
+    value: "50"
+  - name: RAIN_PRECIP_AMOUNT
+    value: "0.1"
+  - name: AQI_UNHEALTHY_THRESHOLD
+    value: "100"
