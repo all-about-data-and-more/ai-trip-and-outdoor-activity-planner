@@ -110,10 +110,23 @@ def get_one_trip(trip_id):
     return jsonify(trip)
 
 
+@app.route("/trips/<trip_id>", methods=["PATCH"])
+def patch_trip(trip_id):
+    body = request.json if request.is_json else {}
+    if "title" in body and not (body.get("title") or "").strip():
+        return jsonify({"error": "'title' cannot be empty"}), 400
+    trip = planner_tools.update_trip(
+        trip_id, title=body.get("title"), start_date=body.get("start_date"),
+        end_date=body.get("end_date"), notes=body.get("notes"),
+    )
+    if trip.get("status") == "error":
+        return jsonify(trip), 404
+    return jsonify(trip)
+
+
 @app.route("/trips/<trip_id>", methods=["DELETE"])
 def delete_one_trip(trip_id):
-    deleted = planner_tools.delete_trip(trip_id)
-    return jsonify({"deleted": deleted})
+    return jsonify(planner_tools.delete_trip(trip_id))
 
 
 # ---------------------------------------------------------------------------
@@ -143,6 +156,11 @@ def post_destination(trip_id):
 @app.route("/destinations/<destination_id>/activities", methods=["GET"])
 def get_activities(destination_id):
     return jsonify(planner_tools.list_activities(destination_id))
+
+
+@app.route("/destinations/<destination_id>", methods=["DELETE"])
+def delete_destination_route(destination_id):
+    return jsonify(planner_tools.delete_destination(destination_id))
 
 
 @app.route("/destinations/<destination_id>/weather", methods=["POST"])
@@ -238,6 +256,12 @@ def post_packing(trip_id):
 @app.route("/trips/<trip_id>/explain", methods=["GET"])
 def get_explain(trip_id):
     return jsonify(planner_tools.explain_changes(trip_id))
+
+
+@app.route("/packing/items/<item_id>/toggle", methods=["POST"])
+def toggle_packing_item(item_id):
+    body = request.json if request.is_json else {}
+    return jsonify(planner_tools.set_packing_packed(item_id, bool(body.get("packed", True))))
 
 
 @app.route("/trips/<trip_id>/itinerary/items", methods=["POST"])

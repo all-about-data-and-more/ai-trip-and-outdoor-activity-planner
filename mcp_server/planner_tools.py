@@ -126,8 +126,65 @@ def list_trips(user_email: str) -> list[dict]:
     )
 
 
-def delete_trip(trip_id: str) -> int:
-    return lakebase.run_write(f"DELETE FROM {lakebase.TRIPS_TABLE} WHERE id = %s", (trip_id,))
+def update_trip(trip_id: str, title=None, start_date=None, end_date=None, notes=None) -> dict:
+    """Update only the provided fields of a trip (WRITE). Returns the trip."""
+    sets, params = [], []
+    if title is not None:
+        sets.append("title = %s"); params.append(title)
+    if start_date is not None:
+        sets.append("start_date = %s"); params.append(start_date or None)
+    if end_date is not None:
+        sets.append("end_date = %s"); params.append(end_date or None)
+    if notes is not None:
+        sets.append("notes = %s"); params.append(notes)
+    if sets:
+        params.append(trip_id)
+        lakebase.run_write(
+            f"UPDATE {lakebase.TRIPS_TABLE} SET {', '.join(sets)} WHERE id = %s", tuple(params))
+    return get_trip(trip_id)
+
+
+def delete_trip(trip_id: str) -> dict:
+    """Delete a trip and ALL of its children — destinations, activities,
+    itinerary items, packing items, weather snapshots, and embeddings (WRITE).
+    Cascades manually since these tables aren't FK-cascade-linked, so nothing is
+    left orphaned."""
+    dest_ids = [r["id"] for r in lakebase.run_query(
+        f"SELECT id FROM {lakebase.DESTINATIONS_TABLE} WHERE trip_id = %s", (trip_id,))]
+    lakebase.run_write(f"DELETE FROM {lakebase.PLACE_EMBEDDINGS_TABLE} WHERE trip_id = %s", (trip_id,))
+    if dest_ids:
+        lakebase.run_write(
+            f"DELETE FROM {lakebase.WEATHER_SNAPSHOTS_TABLE} WHERE destination_id = ANY(%s)", (dest_ids,))
+        lakebase.run_write(
+            f"DELETE FROM {lakebase.ACTIVITIES_TABLE} WHERE destination_id = ANY(%s)", (dest_ids,))
+    lakebase.run_write(f"DELETE FROM {lakebase.ITINERARY_ITEMS_TABLE} WHERE trip_id = %s", (trip_id,))
+    lakebase.run_write(f"DELETE FROM {lakebase.PACKING_ITEMS_TABLE} WHERE trip_id = %s", (trip_id,))
+    lakebase.run_write(f"DELETE FROM {lakebase.DESTINATIONS_TABLE} WHERE trip_id = %s", (trip_id,))
+    deleted = lakebase.run_write(f"DELETE FROM {lakebase.TRIPS_TABLE} WHERE id = %s", (trip_id,))
+    return {"deleted": deleted, "trip_id": trip_id}
+
+
+def delete_destination(destination_id: str) -> dict:
+    """Delete a destination and its activities, weather snapshots, embeddings,
+    and any itinerary items that reference it (WRITE)."""
+    act_ids = [r["id"] for r in lakebase.run_query(
+        f"SELECT id FROM {lakebase.ACTIVITIES_TABLE} WHERE destination_id = %s", (destination_id,))]
+    lakebase.run_write(
+        f"DELETE FROM {lakebase.PLACE_EMBEDDINGS_TABLE} "
+        f"WHERE source_type = 'destination' AND source_id = %s", (destination_id,))
+    if act_ids:
+        lakebase.run_write(
+            f"DELETE FROM {lakebase.PLACE_EMBEDDINGS_TABLE} "
+            f"WHERE source_type = 'activity' AND source_id = ANY(%s)", (act_ids,))
+    lakebase.run_write(
+        f"DELETE FROM {lakebase.WEATHER_SNAPSHOTS_TABLE} WHERE destination_id = %s", (destination_id,))
+    lakebase.run_write(
+        f"DELETE FROM {lakebase.ITINERARY_ITEMS_TABLE} WHERE destination_id = %s", (destination_id,))
+    lakebase.run_write(
+        f"DELETE FROM {lakebase.ACTIVITIES_TABLE} WHERE destination_id = %s", (destination_id,))
+    deleted = lakebase.run_write(
+        f"DELETE FROM {lakebase.DESTINATIONS_TABLE} WHERE id = %s", (destination_id,))
+    return {"deleted": deleted, "destination_id": destination_id}
 
 
 # ---------------------------------------------------------------------------
@@ -466,6 +523,15 @@ def list_packing(trip_id: str) -> list[dict]:
         f"ORDER BY category, item",
         (trip_id,),
     )
+
+
+def set_packing_packed(item_id: str, packed: bool) -> dict:
+    """Check/uncheck a packing item (WRITE)."""
+    updated = lakebase.run_write(
+        f"UPDATE {lakebase.PACKING_ITEMS_TABLE} SET packed = %s WHERE id = %s",
+        (bool(packed), item_id),
+    )
+    return {"updated": updated, "id": item_id, "packed": bool(packed)}
 
 
 def generate_itinerary(trip_id: str, items_per_day: int = 3) -> dict:
