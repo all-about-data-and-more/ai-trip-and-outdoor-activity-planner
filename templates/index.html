@@ -57,6 +57,11 @@
         .pack-item { display: flex; align-items: center; gap: .45rem; cursor: pointer; }
         .pack-item.packed { text-decoration: line-through; opacity: .55; }
         .pack-item input { width: auto; }
+        .addact { gap: .4rem; align-items: center; margin-top: .5rem; flex-wrap: wrap; }
+        .addact > input { flex: 1; width: auto; min-width: 130px; }
+        .chk { display: flex; align-items: center; gap: .3rem; font-size: .82rem; color: var(--muted); white-space: nowrap; }
+        .chk input { width: auto; }
+        .itin-actions { display: flex; gap: .2rem; flex: 0 0 auto; align-items: center; }
         .muted { color: var(--muted); font-size: .85rem; }
         .dest, .activity, .snap, .result {
             border: 1px solid var(--line); border-radius: 10px; padding: .8rem .9rem; margin-bottom: .7rem;
@@ -164,6 +169,7 @@
                     <button id="reschedule" class="ghost" disabled>🌧️ Reschedule for weather</button>
                     <button id="build-pack" class="ghost" disabled>🎒 Packing list</button>
                     <button id="explain" class="ghost" disabled>💡 Explain changes</button>
+                    <button id="export-itin" class="ghost" disabled>⬇️ Export</button>
                 </div>
                 <div id="explain-box" style="margin-top:.7rem"></div>
                 <div id="itinerary" style="margin-top:.8rem"><p class="muted">Generate an itinerary to see it here.</p></div>
@@ -241,8 +247,8 @@ async function loadTrips() {
 async function selectTrip(id) {
     currentTrip = await api(`/trips/${id}`);
     $("current-trip-title").textContent = `📍 ${currentTrip.title}`;
-    ["add-dest", "do-search", "do-embed", "gen-itin", "reschedule",
-     "build-pack", "explain", "chat-input", "chat-send"].forEach(b => $(b).disabled = false);
+    ["add-dest", "do-search", "do-embed", "gen-itin", "reschedule", "build-pack",
+     "explain", "export-itin", "chat-input", "chat-send"].forEach(b => $(b).disabled = false);
     await loadTrips();
     renderDestinations();
     loadItinerary();
@@ -263,6 +269,12 @@ function renderDestinations() {
             <div style="margin-top:.5rem" class="row">
                 <button class="ghost" onclick="loadWeather('${d.id}')">🌦️ Weather &amp; air</button>
                 <button class="ghost" onclick="loadActivities('${d.id}')">🎯 Activities</button>
+                <button class="ghost" onclick="toggleAddAct('${d.id}')">➕ Activity</button>
+            </div>
+            <div id="addact-${d.id}" class="addact" style="display:none">
+                <input id="actname-${d.id}" placeholder="Activity name (e.g. Nishiki Market)" />
+                <label class="chk"><input type="checkbox" id="actout-${d.id}" /> outdoor</label>
+                <button onclick="addActivity('${d.id}')">Add</button>
             </div>
             <div id="wx-${d.id}" style="margin-top:.6rem"></div>
             <div id="act-${d.id}" style="margin-top:.6rem"></div>
@@ -329,7 +341,7 @@ async function deleteTrip(id) {
             $("current-trip-title").textContent = "Select or create a trip";
             $("destinations").innerHTML = '<p class="muted">No trip selected yet.</p>';
             $("itinerary").innerHTML = ''; $("packing").innerHTML = ''; $("explain-box").innerHTML = '';
-            ["add-dest","do-search","do-embed","gen-itin","reschedule","build-pack","explain","chat-input","chat-send"]
+            ["add-dest","do-search","do-embed","gen-itin","reschedule","build-pack","explain","export-itin","chat-input","chat-send"]
                 .forEach(b => $(b).disabled = true);
         }
         loadTrips();
@@ -423,9 +435,11 @@ function groupByDay(items) {
     for (const it of items) { const d = it.day_date || 'Unscheduled'; (days[d] = days[d] || []).push(it); }
     return days;
 }
+let itineraryCache = [];
 async function loadItinerary() {
     if (!currentTrip) return;
     const items = await api(`/trips/${currentTrip.id}/itinerary`);
+    itineraryCache = items;
     const box = $("itinerary");
     if (!items.length) { box.innerHTML = '<p class="muted">No itinerary yet — click “Generate itinerary”.</p>'; return; }
     const days = groupByDay(items);
@@ -440,7 +454,11 @@ async function loadItinerary() {
                         ${it.status === 'rescheduled' ? '<span class="badge moved-b">moved</span>' : ''}
                         ${it.notes ? `<div class="muted">${it.notes}</div>` : ''}
                     </div>
-                    <button class="x" title="Remove" onclick="removeItem('${it.id}')">✕</button>
+                    <div class="itin-actions">
+                        <button class="mini" title="Move up" onclick="moveItem('${it.id}', -1)">▲</button>
+                        <button class="mini" title="Move down" onclick="moveItem('${it.id}', 1)">▼</button>
+                        <button class="x" title="Remove" onclick="removeItem('${it.id}')">✕</button>
+                    </div>
                 </div>`).join('')}
         </div>`).join('');
 }
@@ -470,6 +488,65 @@ async function removeItem(id) {
     await api(`/itinerary/items/${id}`, { method: "DELETE" });
     toast("Removed"); loadItinerary();
 }
+async function moveItem(id, dir) {
+    const item = itineraryCache.find(i => i.id === id); if (!item) return;
+    const day = item.day_date;
+    const dayItems = itineraryCache.filter(i => i.day_date === day)
+        .sort((a, b) => (a.sort_order - b.sort_order) || (a.start_time || '').localeCompare(b.start_time || ''));
+    const idx = dayItems.findIndex(i => i.id === id), j = idx + dir;
+    if (j < 0 || j >= dayItems.length) return;
+    [dayItems[idx], dayItems[j]] = [dayItems[j], dayItems[idx]];
+    try {
+        await api(`/trips/${currentTrip.id}/itinerary/reorder`, { method: "POST", body: { item_ids: dayItems.map(i => i.id) } });
+        loadItinerary();
+    } catch (e) { toast(e.message); }
+}
+
+// ---- Add a custom activity ----
+function toggleAddAct(destId) {
+    const box = $(`addact-${destId}`);
+    box.style.display = box.style.display === "none" ? "flex" : "none";
+    if (box.style.display === "flex") $(`actname-${destId}`).focus();
+}
+async function addActivity(destId) {
+    const name = $(`actname-${destId}`).value.trim();
+    if (!name) return toast("Enter an activity name");
+    try {
+        await api(`/destinations/${destId}/activities`, { method: "POST", body: {
+            name, is_outdoor: $(`actout-${destId}`).checked,
+        }});
+        toast(`Added “${name}” — click Refresh embeddings to make it searchable`);
+        $(`actname-${destId}`).value = ""; $(`actout-${destId}`).checked = false;
+        toggleAddAct(destId); loadActivities(destId);
+    } catch (e) { toast(e.message); }
+}
+
+// ---- Export itinerary as Markdown ----
+$("export-itin").addEventListener("click", async () => {
+    if (!currentTrip) return;
+    const [itin, pack] = await Promise.all([
+        api(`/trips/${currentTrip.id}/itinerary`), api(`/trips/${currentTrip.id}/packing`)]);
+    let md = `# ${currentTrip.title}\n\n`;
+    if (currentTrip.start_date) md += `**Dates:** ${fmtDate(currentTrip.start_date)} – ${fmtDate(currentTrip.end_date)}\n\n`;
+    const dests = (currentTrip.destinations || []).map(d => d.name).join(", ");
+    if (dests) md += `**Destinations:** ${dests}\n\n`;
+    md += `## Itinerary\n\n`;
+    const days = groupByDay(itin);
+    Object.keys(days).sort().forEach(d => {
+        md += `### ${d === 'Unscheduled' ? d : new Date(d).toDateString()}\n`;
+        days[d].forEach(i => md += `- ${i.start_time ? i.start_time + ' — ' : ''}${i.title} (${i.is_outdoor ? 'outdoor' : 'indoor'})${i.status === 'rescheduled' ? ' _(rescheduled for weather)_' : ''}\n`);
+        md += `\n`;
+    });
+    if (pack.length) {
+        md += `## Packing list\n\n`;
+        pack.forEach(p => md += `- [${p.packed ? 'x' : ' '}] ${p.item}${p.reason ? ` — ${p.reason}` : ''}\n`);
+    }
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([md], { type: "text/markdown" }));
+    a.download = `${currentTrip.title.replace(/[^a-z0-9]+/gi, "_")}_itinerary.md`;
+    a.click(); URL.revokeObjectURL(a.href);
+    toast("Itinerary exported");
+});
 async function withBusy(btn, label, fn) {
     const b = $(btn), t = b.textContent; b.disabled = true; b.innerHTML = '<span class="spinner"></span>';
     try { await fn(); } catch (e) { toast(e.message); } finally { b.disabled = false; b.textContent = t; }
