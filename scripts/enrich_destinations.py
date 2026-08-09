@@ -80,8 +80,24 @@ def enrich_destination(dest: dict, max_attractions: int = 10) -> int:
     attractions = wikimedia_client.get_nearby_attractions(
         dest["lat"], dest["lon"], limit=max_attractions
     )
+    # Idempotent re-runs: clear previously-enriched (Wikimedia) activities for
+    # this destination — and their embeddings — before re-adding, so improved
+    # filtering/classification replaces the old set instead of duplicating it.
+    # User-added activities (source='user') are left untouched.
+    old_ids = [r["id"] for r in lakebase.run_query(
+        f"SELECT id FROM {lakebase.ACTIVITIES_TABLE} WHERE destination_id = %s AND source = 'wikimedia'",
+        (dest["id"],))]
+    if old_ids:
+        lakebase.run_write(
+            f"DELETE FROM {lakebase.PLACE_EMBEDDINGS_TABLE} "
+            f"WHERE source_type = 'activity' AND source_id = ANY(%s)", (old_ids,))
+        lakebase.run_write(
+            f"DELETE FROM {lakebase.ACTIVITIES_TABLE} WHERE destination_id = %s AND source = 'wikimedia'",
+            (dest["id"],))
     added = 0
     for att in attractions:
+        if att["title"].strip().lower() == title.lower():
+            continue  # skip the city's own article (e.g. "Osaka" near Osaka)
         is_outdoor = planner_tools._guess_outdoor(att["title"], att.get("extract"))
         lakebase.run_write(
             f"""
