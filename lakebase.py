@@ -9,21 +9,28 @@ notebook:
   1. LAKEBASE_URL env var (preferred for local dev / any non-Databricks box), else
   2. a base64-encoded Databricks secret (scope `database`, key `lakebase-url`),
      read via WorkspaceClient — needs the Databricks CLI configured locally.
+Both are normalized through _maybe_decode() because the value can arrive base64-
+encoded (once by setup_secrets.py, and again when Databricks injects a
+secret-backed env var).
 
 Schema: the seven capstone tables (users, trips, destinations, activities,
 itinerary_items, weather_snapshots, packing_items) plus a pgvector-backed
-`place_embeddings` table that powers context-engineering retrieval. Every table
-has an idempotent `ensure_*_table()` helper (same convention as the weather
-app's `ensure_weather_documents_table`), and `ensure_all_tables()` creates them
-in dependency order. Reference DDL also lives in `sql/` for manual inspection.
+`place_embeddings` table. Each has an idempotent `ensure_*_table()` helper.
+Index/extension DDL runs BEST-EFFORT (see _try_ddl): if the tables were created
+by a different Postgres role, the app's role can't add indexes to them
+("must be owner"), and that must not abort a request — the tables + indexes
+already exist in that case. Reference DDL also lives in `sql/`.
 """
 
 import base64
+import logging
 import os
 from contextlib import contextmanager
 
 import psycopg2
 from psycopg2.extras import RealDictCursor
+
+logger = logging.getLogger("lakebase")
 
 # --- Table names (overridable via env, but you rarely need to) --------------
 USERS_TABLE = os.environ.get("USERS_TABLE", "users")
@@ -73,8 +80,7 @@ def _maybe_decode(value: str) -> str:
 
 def _lakebase_url() -> str:
     """Resolve the Lakebase connection URL: LAKEBASE_URL env first (portable),
-    then the Databricks secret. Both are normalized through _maybe_decode so a
-    base64-encoded value (how Databricks injects secret-backed env vars) works."""
+    then the Databricks secret. Both are normalized through _maybe_decode."""
     url = os.environ.get("LAKEBASE_URL")
     if url:
         return _maybe_decode(url)
@@ -113,8 +119,26 @@ def run_write(sql: str, params: tuple | dict | None = None) -> int:
             return cur.rowcount
 
 
+def _try_ddl(sql: str) -> None:
+    """Run a CREATE INDEX / CREATE EXTENSION statement best-effort.
+
+    If the app's Postgres role doesn't OWN the target table (e.g. the tables
+    were created by another role via the SQL editor), it can't add an index and
+    Postgres raises "must be owner of table ...". Indexes/extensions are
+    optimizations, and in that scenario they already exist — so log and continue
+    rather than aborting the whole request. (Same defensive pattern used for the
+    Day-2 chunk-embeddings table.)
+    """
+    try:
+        run_write(sql)
+    except psycopg2.Error as exc:
+        logger.warning("Skipping DDL (best-effort): %s", str(exc).strip())
+
+
 # ---------------------------------------------------------------------------
 # Schema — one idempotent ensure_* helper per table, created in FK order.
+# CREATE TABLE runs via run_write (a no-op if the table already exists, even
+# for a non-owner); indexes/extensions run via _try_ddl (best-effort).
 # ---------------------------------------------------------------------------
 def ensure_users_table(table: str = USERS_TABLE) -> None:
     run_write(
@@ -144,7 +168,7 @@ def ensure_trips_table(table: str = TRIPS_TABLE) -> None:
         )
         """
     )
-    run_write(f"CREATE INDEX IF NOT EXISTS idx_{table}_user_email ON {table} (user_email)")
+    _try_ddl(f"CREATE INDEX IF NOT EXISTS idx_{table}_user_email ON {table} (user_email)")
 
 
 def ensure_destinations_table(table: str = DESTINATIONS_TABLE) -> None:
@@ -164,7 +188,7 @@ def ensure_destinations_table(table: str = DESTINATIONS_TABLE) -> None:
         )
         """
     )
-    run_write(f"CREATE INDEX IF NOT EXISTS idx_{table}_trip_id ON {table} (trip_id)")
+    _try_ddl(f"CREATE INDEX IF NOT EXISTS idx_{table}_trip_id ON {table} (trip_id)")
 
 
 def ensure_activities_table(table: str = ACTIVITIES_TABLE) -> None:
@@ -184,8 +208,8 @@ def ensure_activities_table(table: str = ACTIVITIES_TABLE) -> None:
         )
         """
     )
-    run_write(f"CREATE INDEX IF NOT EXISTS idx_{table}_destination_id ON {table} (destination_id)")
-    run_write(f"CREATE INDEX IF NOT EXISTS idx_{table}_is_outdoor ON {table} (is_outdoor)")
+    _try_ddl(f"CREATE INDEX IF NOT EXISTS idx_{table}_destination_id ON {table} (destination_id)")
+    _try_ddl(f"CREATE INDEX IF NOT EXISTS idx_{table}_is_outdoor ON {table} (is_outdoor)")
 
 
 def ensure_itinerary_items_table(table: str = ITINERARY_ITEMS_TABLE) -> None:
@@ -208,8 +232,8 @@ def ensure_itinerary_items_table(table: str = ITINERARY_ITEMS_TABLE) -> None:
         )
         """
     )
-    run_write(f"CREATE INDEX IF NOT EXISTS idx_{table}_trip_id ON {table} (trip_id)")
-    run_write(f"CREATE INDEX IF NOT EXISTS idx_{table}_day_date ON {table} (day_date)")
+    _try_ddl(f"CREATE INDEX IF NOT EXISTS idx_{table}_trip_id ON {table} (trip_id)")
+    _try_ddl(f"CREATE INDEX IF NOT EXISTS idx_{table}_day_date ON {table} (day_date)")
 
 
 def ensure_weather_snapshots_table(table: str = WEATHER_SNAPSHOTS_TABLE) -> None:
@@ -234,7 +258,7 @@ def ensure_weather_snapshots_table(table: str = WEATHER_SNAPSHOTS_TABLE) -> None
         )
         """
     )
-    run_write(
+    _try_ddl(
         f"CREATE UNIQUE INDEX IF NOT EXISTS uq_{table}_dest_date "
         f"ON {table} (destination_id, snapshot_date)"
     )
@@ -255,7 +279,7 @@ def ensure_packing_items_table(table: str = PACKING_ITEMS_TABLE) -> None:
         )
         """
     )
-    run_write(f"CREATE INDEX IF NOT EXISTS idx_{table}_trip_id ON {table} (trip_id)")
+    _try_ddl(f"CREATE INDEX IF NOT EXISTS idx_{table}_trip_id ON {table} (trip_id)")
 
 
 def ensure_place_embeddings_table(
@@ -263,9 +287,8 @@ def ensure_place_embeddings_table(
 ) -> None:
     """pgvector-backed chunk embeddings for context engineering. `source_type`
     is 'destination' | 'activity' | 'user_note' and `source_id` points at the
-    originating row, so retrieval can join back to the right table. Polymorphic
-    on purpose, so it's not FK-constrained."""
-    run_write("CREATE EXTENSION IF NOT EXISTS vector")
+    originating row. Polymorphic on purpose, so it's not FK-constrained."""
+    _try_ddl("CREATE EXTENSION IF NOT EXISTS vector")
     run_write(
         f"""
         CREATE TABLE IF NOT EXISTS {table} (
@@ -281,17 +304,17 @@ def ensure_place_embeddings_table(
         )
         """
     )
-    run_write(
+    _try_ddl(
         f"CREATE INDEX IF NOT EXISTS idx_{table}_embedding "
         f"ON {table} USING hnsw (embedding vector_cosine_ops)"
     )
-    run_write(f"CREATE INDEX IF NOT EXISTS idx_{table}_source ON {table} (source_type, source_id)")
-    run_write(f"CREATE INDEX IF NOT EXISTS idx_{table}_trip_id ON {table} (trip_id)")
+    _try_ddl(f"CREATE INDEX IF NOT EXISTS idx_{table}_source ON {table} (source_type, source_id)")
+    _try_ddl(f"CREATE INDEX IF NOT EXISTS idx_{table}_trip_id ON {table} (trip_id)")
 
 
 def ensure_all_tables() -> None:
     """Create every table in dependency order. Idempotent — safe to call on
-    each request/startup (that's how the weather app guarantees its schema)."""
+    each request/startup."""
     ensure_users_table()
     ensure_trips_table()
     ensure_destinations_table()
