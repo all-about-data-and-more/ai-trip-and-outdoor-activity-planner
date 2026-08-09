@@ -16,6 +16,7 @@ add/remove/move_itinerary_item, build_packing_list, and explain_changes.
 """
 
 import json
+import logging
 import os
 import uuid
 from datetime import date, datetime, timedelta
@@ -138,8 +139,9 @@ def add_destination(
     try:
         summary = wikimedia_client.get_summary(loc["name"])
         description, wiki_url = summary.get("extract"), summary.get("url")
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger("planner").warning(
+            "Wikimedia summary failed for %r (%s): %s", loc["name"], type(exc).__name__, exc)
 
     dest_id = _new_id()
     lakebase.run_write(

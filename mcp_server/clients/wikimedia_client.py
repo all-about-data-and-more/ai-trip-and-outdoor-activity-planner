@@ -16,10 +16,13 @@ No API key required.
     https://en.wikipedia.org/api/rest_v1/
 """
 
+import logging
 import os
 from urllib.parse import quote
 
 import requests
+
+logger = logging.getLogger("wikimedia")
 
 _LANG = os.environ.get("WIKIMEDIA_LANG", "en")
 _REST_BASE = os.environ.get("WIKIMEDIA_REST_BASE", "https://{lang}.wikipedia.org/api/rest_v1")
@@ -103,7 +106,8 @@ def get_nearby_attractions(lat: float, lon: float, radius_m: int = 10000, limit:
         )
         geo.raise_for_status()
         hits = ((geo.json() or {}).get("query") or {}).get("geosearch") or []
-    except Exception:  # noqa: BLE001 - attractions are best-effort
+    except Exception as exc:  # noqa: BLE001 - attractions are best-effort
+        logger.warning("Wikimedia geosearch failed (%s): %s", type(exc).__name__, exc)
         return []
 
     if not hits:
@@ -142,8 +146,8 @@ def get_nearby_attractions(lat: float, lon: float, radius_m: int = 10000, limit:
             title = page.get("title")
             if title in by_title:
                 by_title[title]["extract"] = page.get("extract")
-    except Exception:  # noqa: BLE001 - extracts are best-effort enrichment
-        pass
+    except Exception as exc:  # noqa: BLE001 - extracts are best-effort enrichment
+        logger.warning("Wikimedia extracts failed (%s): %s", type(exc).__name__, exc)
 
     # Nearest first.
     return sorted(by_title.values(), key=lambda a: a["distance_m"] if a["distance_m"] is not None else 1e9)
