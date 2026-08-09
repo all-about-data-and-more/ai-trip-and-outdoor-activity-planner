@@ -244,13 +244,17 @@ async function loadActivities(destId) {
 $("create-trip").addEventListener("click", async () => {
     const title = $("trip-title").value.trim();
     if (!title) return toast("Enter a trip title");
-    const t = await api("/trips", { method: "POST", body: {
-        title, start_date: $("trip-start").value || null,
-        end_date: $("trip-end").value || null, notes: $("trip-notes").value || null,
-    }});
-    $("trip-title").value = $("trip-notes").value = "";
-    toast("Trip created");
-    await selectTrip(t.id);
+    const btn = $("create-trip"); btn.disabled = true;
+    try {
+        const t = await api("/trips", { method: "POST", body: {
+            title, start_date: $("trip-start").value || null,
+            end_date: $("trip-end").value || null, notes: $("trip-notes").value || null,
+        }});
+        $("trip-title").value = $("trip-notes").value = "";
+        toast("Trip created");
+        await selectTrip(t.id);
+    } catch (e) { toast(e.message); }
+    finally { btn.disabled = false; }
 });
 
 $("add-dest").addEventListener("click", async () => {
@@ -281,9 +285,12 @@ $("do-embed").addEventListener("click", async () => {
 $("do-search").addEventListener("click", async () => {
     const query = $("search-q").value.trim();
     if (!query) return toast("Enter a search query");
-    const r = await api("/search", { method: "POST", body: {
-        query, trip_id: currentTrip ? currentTrip.id : null, top_k: 8,
-    }});
+    let r;
+    try {
+        r = await api("/search", { method: "POST", body: {
+            query, trip_id: currentTrip ? currentTrip.id : null, top_k: 8,
+        }});
+    } catch (e) { return toast(e.message); }
     const box = $("search-results");
     if (!r.results || !r.results.length) { box.innerHTML = '<p class="muted">No matches. Add destinations and Refresh embeddings first.</p>'; return; }
     box.innerHTML = r.results.map(x => `
@@ -295,7 +302,7 @@ $("do-search").addEventListener("click", async () => {
         </div>`).join("");
 });
 
-loadTrips();
+loadTrips().catch(e => toast("Could not load trips: " + e.message));
 </script>
 </body>
 </html>
