@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Local env / secrets — never commit real values
+.env
+*.local
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Databricks
+.databricks/
+
+# Model / HF caches (the sentence-transformers model downloads at runtime)
+.cache/
+hf_cache/

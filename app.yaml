@@ -1,0 +1,39 @@
+command:
+  - "python"
+  - "app.py"
+
+# The only secret this app needs is the Lakebase connection URL (scope/key
+# below), exactly like the weather app. All third-party data sources used here
+# — Open-Meteo (geocoding / weather / air quality) and Wikimedia — are KEY-LESS
+# for non-commercial use, so there are no other secrets to configure.
+env:
+  - name: LAKEBASE_SECRET_SCOPE
+    value: "database"
+  - name: LAKEBASE_SECRET_KEY
+    value: "lakebase-url"
+
+  # Foundation Model endpoint used for the in-app agent chat + natural-language
+  # explanations. Same endpoint family the weather app already calls
+  # successfully on Free Edition. Swap to any tool-calling-capable endpoint
+  # available in your workspace.
+  - name: PLANNER_AGENT_MODEL
+    value: "databricks-meta-llama-3-3-70b-instruct"
+  - name: PLANNER_EXPLAIN_MODEL
+    value: "databricks-meta-llama-3-1-8b-instruct"
+
+  # Units for weather + derived recommendations (imperial by default, matching
+  # the weather-mcp-server thresholds).
+  - name: WEATHER_TEMPERATURE_UNIT
+    value: "fahrenheit"
+  - name: WEATHER_WIND_SPEED_UNIT
+    value: "mph"
+  - name: WEATHER_PRECIPITATION_UNIT
+    value: "inch"
+
+  # Thresholds that decide when an outdoor activity gets rescheduled.
+  - name: RAIN_PRECIP_CHANCE_PCT
+    value: "50"
+  - name: RAIN_PRECIP_AMOUNT
+    value: "0.1"
+  - name: AQI_UNHEALTHY_THRESHOLD
+    value: "100"
