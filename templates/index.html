@@ -73,6 +73,19 @@
         .toast.show { opacity: 1; }
         .pill { background: var(--chip); color: #0f766e; border-radius: 999px; padding: .1rem .55rem; font-size: .72rem; }
         .stub { border: 1px dashed var(--line); border-radius: 10px; padding: 1rem; color: var(--muted); font-size: .85rem; text-align: center; }
+        .day { margin-bottom: .8rem; }
+        .day-h { font-weight: 700; color: var(--accent2); font-size: .85rem; margin-bottom: .35rem; border-bottom: 1px solid var(--line); padding-bottom: .2rem; }
+        .itin { display: flex; justify-content: space-between; align-items: start; gap: .5rem; padding: .5rem .6rem; border: 1px solid var(--line); border-radius: 8px; margin-bottom: .4rem; }
+        .itin.moved { border-left: 3px solid var(--warn); background: #fffbeb; }
+        .badge.moved-b { background: #fef3c7; color: var(--warn); }
+        .itin .x { background: #f1f5f9; color: var(--muted); padding: .1rem .5rem; font-size: .8rem; }
+        .pack-h { font-weight: 700; margin: .3rem 0 .5rem; }
+        .pack-cat { margin-bottom: .5rem; }
+        .pack-item { font-size: .88rem; margin: .2rem 0 .2rem .3rem; }
+        .explain { background: #f0fdfa; border-left: 3px solid var(--accent); padding: .7rem .9rem; border-radius: 8px; font-size: .9rem; line-height: 1.5; }
+        .msg { padding: .55rem .75rem; border-radius: 10px; margin-bottom: .45rem; font-size: .9rem; line-height: 1.45; max-width: 88%; }
+        .msg.user { background: var(--accent); color: #fff; margin-left: auto; }
+        .msg.bot { background: #f1f5f9; color: var(--ink); }
         .spinner { display:inline-block; width:14px; height:14px; border:2px solid #ffffff66; border-top-color:#fff; border-radius:50%; animation: spin .8s linear infinite; vertical-align:-2px; }
         @keyframes spin { to { transform: rotate(360deg); } }
     </style>
@@ -134,15 +147,25 @@
 
             <div class="card">
                 <h2>🗓️ Itinerary &amp; packing <span class="pill">agent</span></h2>
-                <div class="stub">
-                    The agent builds a day-by-day itinerary, reschedules outdoor activities on rain/poor air
-                    quality, and generates a packing list here. (Wired in Phase 2.)
+                <div class="row" style="flex-wrap:wrap;gap:.5rem">
+                    <button id="gen-itin" disabled>🗓️ Generate itinerary</button>
+                    <button id="reschedule" class="ghost" disabled>🌧️ Reschedule for weather</button>
+                    <button id="build-pack" class="ghost" disabled>🎒 Packing list</button>
+                    <button id="explain" class="ghost" disabled>💡 Explain changes</button>
                 </div>
+                <div id="explain-box" style="margin-top:.7rem"></div>
+                <div id="itinerary" style="margin-top:.8rem"><p class="muted">Generate an itinerary to see it here.</p></div>
+                <div id="packing" style="margin-top:.8rem"></div>
             </div>
 
             <div class="card">
                 <h2>💬 Plan with the agent <span class="pill">chat</span></h2>
-                <div class="stub">Chat with the planner agent here — coming in Phase 2.</div>
+                <div id="chat-log" style="max-height:320px;overflow-y:auto;margin-bottom:.6rem"></div>
+                <div class="row">
+                    <input id="chat-input" placeholder="e.g. Build my itinerary and a packing list" disabled />
+                    <button id="chat-send" style="flex:0 0 auto" disabled>Send</button>
+                </div>
+                <p class="muted" style="margin-top:.4rem">Try: &ldquo;reschedule anything rainy&rdquo;, &ldquo;what should I pack?&rdquo;, &ldquo;find quiet gardens&rdquo;.</p>
             </div>
         </div>
     </div>
@@ -190,9 +213,12 @@ async function loadTrips() {
 async function selectTrip(id) {
     currentTrip = await api(`/trips/${id}`);
     $("current-trip-title").textContent = `📍 ${currentTrip.title}`;
-    ["add-dest", "do-search", "do-embed"].forEach(b => $(b).disabled = false);
+    ["add-dest", "do-search", "do-embed", "gen-itin", "reschedule",
+     "build-pack", "explain", "chat-input", "chat-send"].forEach(b => $(b).disabled = false);
     await loadTrips();
     renderDestinations();
+    loadItinerary();
+    loadPacking();
 }
 
 function renderDestinations() {
@@ -301,6 +327,95 @@ $("do-search").addEventListener("click", async () => {
             <div class="muted">${x.destination_name} — ${(x.description || '').slice(0, 120)}</div>
         </div>`).join("");
 });
+
+// ---- Itinerary + packing ----
+function groupByDay(items) {
+    const days = {};
+    for (const it of items) { const d = it.day_date || 'Unscheduled'; (days[d] = days[d] || []).push(it); }
+    return days;
+}
+async function loadItinerary() {
+    if (!currentTrip) return;
+    const items = await api(`/trips/${currentTrip.id}/itinerary`);
+    const box = $("itinerary");
+    if (!items.length) { box.innerHTML = '<p class="muted">No itinerary yet — click “Generate itinerary”.</p>'; return; }
+    const days = groupByDay(items);
+    box.innerHTML = Object.keys(days).sort().map(d => `
+        <div class="day">
+            <div class="day-h">${d === 'Unscheduled' ? d : new Date(d).toDateString()}</div>
+            ${days[d].map(it => `
+                <div class="itin ${it.status === 'rescheduled' ? 'moved' : ''}">
+                    <div>
+                        <strong>${it.start_time ? it.start_time + ' · ' : ''}${it.title}</strong>
+                        <span class="badge ${it.is_outdoor ? 'out' : 'in'}">${it.is_outdoor ? 'outdoor' : 'indoor'}</span>
+                        ${it.status === 'rescheduled' ? '<span class="badge moved-b">moved</span>' : ''}
+                        ${it.notes ? `<div class="muted">${it.notes}</div>` : ''}
+                    </div>
+                    <button class="x" title="Remove" onclick="removeItem('${it.id}')">✕</button>
+                </div>`).join('')}
+        </div>`).join('');
+}
+async function loadPacking() {
+    if (!currentTrip) return;
+    const items = await api(`/trips/${currentTrip.id}/packing`);
+    const box = $("packing");
+    if (!items.length) { box.innerHTML = ''; return; }
+    const cats = {};
+    for (const p of items) (cats[p.category || 'other'] = cats[p.category || 'other'] || []).push(p);
+    box.innerHTML = '<div class="pack-h">🎒 Packing list</div>' + Object.keys(cats).sort().map(c => `
+        <div class="pack-cat"><span class="pill">${c}</span>
+            ${cats[c].map(p => `<div class="pack-item">${p.item}${p.reason ? ` <span class="muted">— ${p.reason}</span>` : ''}</div>`).join('')}
+        </div>`).join('');
+}
+async function removeItem(id) {
+    await api(`/itinerary/items/${id}`, { method: "DELETE" });
+    toast("Removed"); loadItinerary();
+}
+async function withBusy(btn, label, fn) {
+    const b = $(btn), t = b.textContent; b.disabled = true; b.innerHTML = '<span class="spinner"></span>';
+    try { await fn(); } catch (e) { toast(e.message); } finally { b.disabled = false; b.textContent = t; }
+}
+$("gen-itin").addEventListener("click", () => withBusy("gen-itin", null, async () => {
+    const r = await api(`/trips/${currentTrip.id}/itinerary/generate`, { method: "POST", body: {} });
+    if (r.error || r.status === 'error') return toast(r.error || r.message);
+    toast(`Itinerary: ${r.items_created} items over ${r.days} days`); loadItinerary();
+}));
+$("reschedule").addEventListener("click", () => withBusy("reschedule", null, async () => {
+    const r = await api(`/trips/${currentTrip.id}/reschedule`, { method: "POST", body: {} });
+    toast(r.changes_made ? `Moved ${r.changes_made} outdoor item(s) for weather` : "No changes needed");
+    loadItinerary();
+}));
+$("build-pack").addEventListener("click", () => withBusy("build-pack", null, async () => {
+    const r = await api(`/trips/${currentTrip.id}/packing`, { method: "POST", body: {} });
+    toast(`Packing list: ${r.items_created} items`); loadPacking();
+}));
+$("explain").addEventListener("click", () => withBusy("explain", null, async () => {
+    const r = await api(`/trips/${currentTrip.id}/explain`);
+    $("explain-box").innerHTML = `<div class="explain">💡 ${r.explanation.replace(/\n/g, '<br>')}</div>`;
+}));
+
+// ---- Agent chat ----
+function pushChat(role, text) {
+    const log = $("chat-log");
+    log.insertAdjacentHTML("beforeend", `<div class="msg ${role}">${text.replace(/\n/g, '<br>')}</div>`);
+    log.scrollTop = log.scrollHeight;
+}
+async function sendChat() {
+    const input = $("chat-input"), msg = input.value.trim();
+    if (!msg || !currentTrip) return;
+    pushChat("user", msg); input.value = "";
+    pushChat("bot", '<span class="spinner"></span>');
+    try {
+        const r = await api("/agent/chat", { method: "POST", body: { message: msg, trip_id: currentTrip.id } });
+        $("chat-log").lastChild.remove();
+        pushChat("bot", (r.reply || "(no reply)") + (r.tool_calls && r.tool_calls.length
+            ? `<div class="muted">used: ${r.tool_calls.map(t => t.tool).join(', ')}</div>` : ''));
+        loadItinerary(); loadPacking();
+        if (currentTrip) { currentTrip = await api(`/trips/${currentTrip.id}`); renderDestinations(); }
+    } catch (e) { $("chat-log").lastChild.remove(); pushChat("bot", "⚠️ " + e.message); }
+}
+$("chat-send").addEventListener("click", sendChat);
+$("chat-input").addEventListener("keypress", e => { if (e.key === "Enter") sendChat(); });
 
 loadTrips().catch(e => toast("Could not load trips: " + e.message));
 </script>
