@@ -42,25 +42,33 @@ _SCOPE = os.environ.get("LAKEBASE_SECRET_SCOPE", "database")
 _KEY = os.environ.get("LAKEBASE_SECRET_KEY", "lakebase-url")
 
 
-def _maybe_decode(value: str) -> str:
-    """Return a usable Postgres URL whether `value` is a raw URL or base64.
+def _looks_like_pg_url(s: str) -> bool:
+    return s.startswith("postgres://") or s.startswith("postgresql://")
 
-    Databricks hands secret-backed env vars to the app base64-ENCODED, and
-    setup_secrets.py also stores the secret base64-encoded — so the same value
-    can arrive either already-decoded (a raw postgresql:// URL) or still
-    encoded, depending on the path. Detect and normalize both instead of
-    assuming, which is exactly what bit the first deploy.
+
+def _maybe_decode(value: str) -> str:
+    """Return a usable Postgres URL whether `value` is a raw URL or base64-
+    encoded one or more times.
+
+    The value can be encoded TWICE: setup_secrets.py stores the secret
+    base64-encoded, and Databricks base64-encodes it again when injecting a
+    secret-backed env var (LAKEBASE_URL) into the app. So peel base64 layers
+    until we hit a postgresql:// URL, capping the loop to stay safe. If no URL
+    surfaces, return the original untouched.
     """
-    v = (value or "").strip()
-    if v.startswith("postgres://") or v.startswith("postgresql://"):
-        return v
-    try:
-        decoded = base64.b64decode(v).decode("utf-8").strip()
-        if decoded.startswith("postgres://") or decoded.startswith("postgresql://"):
-            return decoded
-    except Exception:  # noqa: BLE001 - not base64; fall through to return as-is
-        pass
-    return v
+    original = (value or "").strip()
+    v = original
+    for _ in range(4):  # raw / single / double / triple-encoded all covered
+        if _looks_like_pg_url(v):
+            return v
+        try:
+            nxt = base64.b64decode(v).decode("utf-8").strip()
+        except Exception:  # noqa: BLE001 - not base64; stop peeling
+            return original
+        if not nxt or nxt == v:
+            return original
+        v = nxt
+    return original
 
 
 def _lakebase_url() -> str:
