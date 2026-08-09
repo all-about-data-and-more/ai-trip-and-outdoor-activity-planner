@@ -22,6 +22,7 @@ from datetime import date, datetime, timedelta
 
 import embeddings
 import lakebase
+import llm
 from clients import air_quality_client, geocoding_client, weather_client, wikimedia_client
 
 # Reschedule / advisory thresholds (imperial defaults; overridable via env).
@@ -349,3 +350,389 @@ def search_activities(query: str, trip_id: str | None = None, top_k: int = 8,
             best[aid] = r
     results = sorted(best.values(), key=lambda x: x["similarity"], reverse=True)
     return {"query": query, "count": len(results), "results": results}
+
+
+# ===========================================================================
+# Phase 2 — itinerary, rescheduling, packing, edits, and explanations.
+# These are the "generate / reschedule / build / edit / explain" agent
+# capabilities the capstone requires. Heavy logic is DETERMINISTIC; the LLM is
+# used only to phrase the explanation.
+# ===========================================================================
+
+# Time slots itinerary items are dropped into, in order.
+_SLOTS = [("09:00", "11:00"), ("11:30", "13:30"), ("14:00", "16:00"), ("16:30", "18:30")]
+
+
+def _as_date(value):
+    """Coerce a value (date, or 'YYYY-MM-DD' string) to a date, or None."""
+    if value is None:
+        return None
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return value
+    if isinstance(value, datetime):
+        return value.date()
+    try:
+        return datetime.strptime(str(value)[:10], "%Y-%m-%d").date()
+    except (ValueError, TypeError):
+        return None
+
+
+def _trip_days(trip: dict) -> list[date]:
+    """Inclusive list of dates for the trip. Falls back to a 3-day window from
+    today when the trip has no start/end date set."""
+    start = _as_date(trip.get("start_date"))
+    end = _as_date(trip.get("end_date"))
+    if not start:
+        start = date.today()
+        end = start + timedelta(days=2)
+    if not end or end < start:
+        end = start
+    days, d = [], start
+    while d <= end and len(days) < 30:  # cap to keep it sane
+        days.append(d)
+        d += timedelta(days=1)
+    return days
+
+
+def _is_bad_weather(snap: dict | None) -> tuple[bool, str]:
+    """Decide whether a day's conditions are unsuitable for outdoor activity,
+    with a plain-language reason. Thresholds are the RAIN_*/AQI_* env knobs."""
+    if not snap:
+        return False, ""
+    chance = snap.get("precip_chance_pct") or 0
+    amount = snap.get("precip_amount") or 0
+    aqi = snap.get("aqi") or 0
+    reasons = []
+    if chance >= RAIN_PRECIP_CHANCE_PCT or amount >= RAIN_PRECIP_AMOUNT:
+        reasons.append(f"{int(chance)}% chance of rain")
+    if aqi >= AQI_UNHEALTHY_THRESHOLD:
+        reasons.append(f"unhealthy air (AQI {int(aqi)})")
+    return (len(reasons) > 0), " and ".join(reasons)
+
+
+def _get_snapshot(destination_id: str, day: date) -> dict | None:
+    rows = lakebase.run_query(
+        f"SELECT * FROM {lakebase.WEATHER_SNAPSHOTS_TABLE} "
+        f"WHERE destination_id = %s AND snapshot_date = %s",
+        (destination_id, day),
+    )
+    return rows[0] if rows else None
+
+
+def _assign_days_to_destinations(days: list[date], dests: list[dict]) -> list[dict]:
+    """Map each trip day to a destination. Honors arrival/depart windows when
+    set; otherwise spreads destinations evenly across the days."""
+    assigned = []
+    for i, day in enumerate(days):
+        match = None
+        for d in dests:
+            a, dep = _as_date(d.get("arrival_date")), _as_date(d.get("depart_date"))
+            if a and dep and a <= day <= dep:
+                match = d
+                break
+            if a and not dep and a == day:
+                match = d
+                break
+        assigned.append(match or dests[i % len(dests)])
+    return assigned
+
+
+def list_itinerary(trip_id: str) -> list[dict]:
+    return lakebase.run_query(
+        f"SELECT * FROM {lakebase.ITINERARY_ITEMS_TABLE} WHERE trip_id = %s "
+        f"ORDER BY day_date NULLS LAST, sort_order, start_time",
+        (trip_id,),
+    )
+
+
+def list_packing(trip_id: str) -> list[dict]:
+    return lakebase.run_query(
+        f"SELECT * FROM {lakebase.PACKING_ITEMS_TABLE} WHERE trip_id = %s "
+        f"ORDER BY category, item",
+        (trip_id,),
+    )
+
+
+def generate_itinerary(trip_id: str, items_per_day: int = 3) -> dict:
+    """
+    Build a weather-aware day-by-day itinerary (WRITE). For each trip day it
+    picks a destination, pulls that day's forecast/AQI into weather_snapshots,
+    and schedules activities — indoor-first on bad-weather days, outdoor-first on
+    good ones. Regenerates from scratch each call (clears prior planned items).
+    """
+    lakebase.ensure_itinerary_items_table()
+    lakebase.ensure_weather_snapshots_table()
+    trip = get_trip(trip_id)
+    if trip.get("status") == "error":
+        return trip
+    dests = trip.get("destinations") or []
+    if not dests:
+        return {"status": "error", "message": "Add at least one destination first."}
+
+    days = _trip_days(trip)
+    for d in dests:  # populate weather so scheduling is weather-aware
+        snapshot_weather(d["id"], days=len(days) + 1)
+
+    day_dest = _assign_days_to_destinations(days, dests)
+    lakebase.run_write(
+        f"DELETE FROM {lakebase.ITINERARY_ITEMS_TABLE} WHERE trip_id = %s AND status = 'planned'",
+        (trip_id,),
+    )
+
+    created = 0
+    for day, dest in zip(days, day_dest):
+        snap = _get_snapshot(dest["id"], day)
+        bad, reason = _is_bad_weather(snap)
+        acts = list_activities(dest["id"])
+        outdoor = [a for a in acts if a["is_outdoor"]]
+        indoor = [a for a in acts if not a["is_outdoor"]]
+        ordered = (indoor + outdoor) if bad else (outdoor + indoor)
+        chosen = ordered[:items_per_day] or [None]
+
+        for j, act in enumerate(chosen):
+            slot = _SLOTS[j % len(_SLOTS)]
+            if act is None:
+                title, is_outdoor, act_id = f"Explore {dest['name']}", False, None
+                note = ""
+            else:
+                title, is_outdoor, act_id = act["name"], act["is_outdoor"], act["id"]
+                note = ""
+                if bad and is_outdoor:
+                    note = f"Weather watch: {reason} expected — may be moved by reschedule."
+                elif bad:
+                    note = f"Indoor pick for likely {reason}."
+            lakebase.run_write(
+                f"""
+                INSERT INTO {lakebase.ITINERARY_ITEMS_TABLE}
+                    (id, trip_id, destination_id, activity_id, title, day_date,
+                     start_time, end_time, is_outdoor, status, notes, sort_order)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'planned', %s, %s)
+                """,
+                (_new_id(), trip_id, dest["id"], act_id, title, day,
+                 slot[0], slot[1], is_outdoor, note, j),
+            )
+            created += 1
+
+    return {
+        "trip_id": trip_id,
+        "days": len(days),
+        "items_created": created,
+        "itinerary": list_itinerary(trip_id),
+    }
+
+
+def _find_good_day(destination_id: str, current_day: date, days: list[date]) -> date | None:
+    """Nearest trip day (to current_day) whose weather is NOT bad, for the same
+    destination. Returns None if no clearer day exists."""
+    candidates = []
+    for day in days:
+        if day == current_day:
+            continue
+        ok, _ = _is_bad_weather(_get_snapshot(destination_id, day))
+        if not ok:  # ok==False means NOT bad -> good
+            candidates.append(day)
+    if not candidates:
+        return None
+    return min(candidates, key=lambda d: abs((d - current_day).days))
+
+
+def reschedule_for_weather(trip_id: str) -> dict:
+    """
+    Move outdoor itinerary items off bad-weather days (WRITE). Refreshes each
+    destination's forecast/AQI, then for every outdoor item on a rainy / poor-AQI
+    day, moves it to the nearest clear day for that destination (or flags it if
+    none exists), recording the reason on the item. Returns the changes made —
+    this is the data explain_changes narrates.
+    """
+    trip = get_trip(trip_id)
+    if trip.get("status") == "error":
+        return trip
+    dests = trip.get("destinations") or []
+    days = _trip_days(trip)
+    for d in dests:
+        snapshot_weather(d["id"], days=len(days) + 1)
+
+    changes = []
+    for item in list_itinerary(trip_id):
+        if not item["is_outdoor"] or item["status"] == "rescheduled":
+            continue
+        day = _as_date(item.get("day_date"))
+        if not day or not item.get("destination_id"):
+            continue
+        bad, reason = _is_bad_weather(_get_snapshot(item["destination_id"], day))
+        if not bad:
+            continue
+
+        better = _find_good_day(item["destination_id"], day, days)
+        if better:
+            note = f"Moved from {day.isoformat()} to {better.isoformat()} — {reason} forecast."
+            lakebase.run_write(
+                f"UPDATE {lakebase.ITINERARY_ITEMS_TABLE} SET day_date = %s, status = 'rescheduled', "
+                f"notes = %s, updated_at = now() WHERE id = %s",
+                (better, note, item["id"]),
+            )
+            changes.append({"item": item["title"], "from": day.isoformat(),
+                            "to": better.isoformat(), "reason": reason})
+        else:
+            note = (f"Flagged: {reason} on {day.isoformat()} and no clearer day is available — "
+                    f"consider an indoor alternative.")
+            lakebase.run_write(
+                f"UPDATE {lakebase.ITINERARY_ITEMS_TABLE} SET status = 'rescheduled', notes = %s, "
+                f"updated_at = now() WHERE id = %s",
+                (note, item["id"]),
+            )
+            changes.append({"item": item["title"], "from": day.isoformat(),
+                            "to": None, "reason": reason})
+
+    return {"trip_id": trip_id, "changes_made": len(changes), "changes": changes}
+
+
+def build_packing_list(trip_id: str) -> dict:
+    """
+    Generate a weather- and activity-aware packing list (WRITE). Aggregates the
+    trip's forecast/AQI + activities into concrete items with reasons, writing
+    them to packing_items. Regenerates from scratch each call.
+    """
+    lakebase.ensure_packing_items_table()
+    trip = get_trip(trip_id)
+    if trip.get("status") == "error":
+        return trip
+    dests = trip.get("destinations") or []
+    days = _trip_days(trip)
+    for d in dests:
+        snapshot_weather(d["id"], days=len(days) + 1)
+
+    snaps = []
+    for d in dests:
+        snaps += lakebase.run_query(
+            f"SELECT * FROM {lakebase.WEATHER_SNAPSHOTS_TABLE} WHERE destination_id = %s",
+            (d["id"],),
+        )
+    lows = [s["temp_low"] for s in snaps if s.get("temp_low") is not None]
+    highs = [s["temp_high"] for s in snaps if s.get("temp_high") is not None]
+    uvs = [s["uv_index_max"] for s in snaps if s.get("uv_index_max") is not None]
+    min_low = min(lows) if lows else None
+    max_high = max(highs) if highs else None
+    max_uv = max(uvs) if uvs else None
+    any_rain = any((_is_bad_weather(s)[0] and (s.get("precip_chance_pct") or 0) >= RAIN_PRECIP_CHANCE_PCT) for s in snaps)
+    any_bad_air = any((s.get("aqi") or 0) >= AQI_UNHEALTHY_THRESHOLD for s in snaps)
+    any_outdoor = any(
+        a["is_outdoor"] for d in dests for a in list_activities(d["id"])
+    )
+
+    items: list[tuple[str, str, str]] = [  # (category, item, reason)
+        ("documents", "Passport / ID", "Essential for travel"),
+        ("documents", "Travel insurance & bookings", "Essential for travel"),
+        ("electronics", "Phone + charger", "Everyday essential"),
+        ("electronics", "Power adapter", "Different outlets abroad"),
+        ("health", "Personal medications", "Everyday essential"),
+        ("essentials", "Reusable water bottle", "Stay hydrated between activities"),
+    ]
+    if min_low is not None and min_low < 50:
+        items.append(("clothing", "Warm jacket / layers", f"Lows near {int(min_low)}° expected"))
+    if max_high is not None and max_high > 80:
+        items.append(("clothing", "Light, breathable clothing", f"Highs near {int(max_high)}° expected"))
+        items.append(("accessories", "Sun hat", "Hot, sunny days expected"))
+    if any_rain:
+        items.append(("gear", "Compact umbrella", "Rain in the forecast"))
+        items.append(("clothing", "Waterproof jacket", "Rain in the forecast"))
+    if max_uv is not None and max_uv >= 6:
+        items.append(("health", "Sunscreen (SPF 30+)", f"High UV index (~{int(max_uv)})"))
+        items.append(("accessories", "Sunglasses", "High UV index"))
+    if any_bad_air:
+        items.append(("health", "N95 mask", "Poor air-quality days forecast"))
+    if any_outdoor:
+        items.append(("gear", "Comfortable walking / hiking shoes", "Outdoor activities planned"))
+        items.append(("gear", "Small daypack", "Outdoor activities planned"))
+
+    lakebase.run_write(f"DELETE FROM {lakebase.PACKING_ITEMS_TABLE} WHERE trip_id = %s", (trip_id,))
+    for category, item, reason in items:
+        lakebase.run_write(
+            f"INSERT INTO {lakebase.PACKING_ITEMS_TABLE} (id, trip_id, category, item, reason) "
+            f"VALUES (%s, %s, %s, %s, %s)",
+            (_new_id(), trip_id, category, item, reason),
+        )
+
+    return {"trip_id": trip_id, "items_created": len(items), "packing": list_packing(trip_id)}
+
+
+def add_itinerary_item(trip_id: str, title: str, day_date=None, destination_id=None,
+                       activity_id=None, is_outdoor: bool = False, start_time=None,
+                       end_time=None, notes=None) -> dict:
+    """Add a single itinerary item (WRITE)."""
+    lakebase.ensure_itinerary_items_table()
+    item_id = _new_id()
+    lakebase.run_write(
+        f"""
+        INSERT INTO {lakebase.ITINERARY_ITEMS_TABLE}
+            (id, trip_id, destination_id, activity_id, title, day_date, start_time,
+             end_time, is_outdoor, status, notes)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'planned', %s)
+        """,
+        (item_id, trip_id, destination_id, activity_id, title, _as_date(day_date) or None,
+         start_time, end_time, is_outdoor, notes),
+    )
+    return {"id": item_id, "trip_id": trip_id, "title": title}
+
+
+def remove_itinerary_item(item_id: str) -> dict:
+    """Remove an itinerary item (WRITE)."""
+    deleted = lakebase.run_write(
+        f"DELETE FROM {lakebase.ITINERARY_ITEMS_TABLE} WHERE id = %s", (item_id,)
+    )
+    return {"removed": deleted, "id": item_id}
+
+
+def move_itinerary_item(item_id: str, day_date=None, start_time=None,
+                        end_time=None, sort_order=None) -> dict:
+    """Move/reschedule an itinerary item to a new day or time (WRITE)."""
+    sets, params = [], []
+    if day_date is not None:
+        sets.append("day_date = %s")
+        params.append(_as_date(day_date))
+    if start_time is not None:
+        sets.append("start_time = %s")
+        params.append(start_time)
+    if end_time is not None:
+        sets.append("end_time = %s")
+        params.append(end_time)
+    if sort_order is not None:
+        sets.append("sort_order = %s")
+        params.append(int(sort_order))
+    if not sets:
+        return {"status": "error", "message": "Nothing to update."}
+    sets.append("updated_at = now()")
+    params.append(item_id)
+    updated = lakebase.run_write(
+        f"UPDATE {lakebase.ITINERARY_ITEMS_TABLE} SET {', '.join(sets)} WHERE id = %s",
+        tuple(params),
+    )
+    return {"updated": updated, "id": item_id}
+
+
+def explain_changes(trip_id: str) -> dict:
+    """
+    Explain, in plain language, the weather-based changes the agent made — the
+    "explain why it made each change" capability. Reads rescheduled items +
+    their reasons and asks the Foundation Model to summarize; falls back to a
+    deterministic summary if the model is unavailable.
+    """
+    rescheduled = [i for i in list_itinerary(trip_id) if i["status"] == "rescheduled"]
+    if not rescheduled:
+        return {"trip_id": trip_id, "changes": [],
+                "explanation": "No weather-based changes were needed — every activity is on a suitable day."}
+
+    lines = [f"- {i['title']}: {i.get('notes') or 'rescheduled'}" for i in rescheduled]
+    deterministic = "I adjusted your plan for the weather:\n" + "\n".join(lines)
+
+    text = llm.simple_chat(
+        system=("You are a concise travel-planning assistant. Explain, warmly and briefly, why "
+                "these outdoor activities were rescheduled based on weather/air quality. Use only "
+                "the facts given."),
+        user="Here are the changes I made:\n" + "\n".join(lines),
+    )
+    return {
+        "trip_id": trip_id,
+        "changes": [{"item": i["title"], "notes": i.get("notes")} for i in rescheduled],
+        "explanation": text or deterministic,
+    }
