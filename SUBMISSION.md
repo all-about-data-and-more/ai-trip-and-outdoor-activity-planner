@@ -16,7 +16,7 @@ its weather-based decisions — grounded in real forecasts and its own vector se
   — MCP endpoint: `…/mcp`
 - **Agent app** (`agent-trip-planner`): https://agent-trip-planner-7474650707148987.aws.databricksapps.com
 
-## The 5 mandatory components → where satisfied
+## The 6 mandatory components → where satisfied
 
 | # | Component | Where |
 |---|-----------|-------|
@@ -25,6 +25,7 @@ its weather-based decisions — grounded in real forecasts and its own vector se
 | 3 | **Unstructured-data processing** | Destination descriptions, attraction text, activity requirements, and user notes are chunked + embedded (384-dim MiniLM) into `place_embeddings` (pgvector) — `embedding_job.py`, `embeddings.py`. |
 | 4 | **Databricks App with a frontend** | `app.py` (Flask REST) + `templates/index.html` (single-page UI), deployed via `app.yaml` as `ai-trip-planner-app`. |
 | 5 | **Agent that searches/retrieves AND writes to the DB** | `planner_tools.py` — retrieval (`search_activities:374`, pgvector cosine) **and** writes (`add_destination:193`, `generate_itinerary:537`, `reschedule_for_weather:620`, `build_packing_list:671`). Exposed via an in-app agent **and** an Agent Bricks agent over MCP. |
+| 6 | **Analytics inside a Delta table about the app** | `analytics.py` logs usage events (trip created, itinerary generated, reschedule, search, agent chat, …) to a Unity Catalog **Delta** table `workspace.trip_planner.app_events` via the SQL Statement Execution API (fire-and-forget). `notebooks/app_analytics.py` (Spark) reads it and writes a **Delta gold** table `…app_analytics` (event mix, engagement funnel, daily activity) with charts. |
 
 ## Data &amp; auth (no secrets committed)
 
@@ -113,6 +114,7 @@ The agent both **retrieves** (search / weather / air-quality tools) and **writes
 - In-app tool-calling agent + fallback: `agent.py:114` (`chat`), `agent.py:163` (`_fallback`), `llm.py:64` (`tool_chat`)
 - MCP server (FastMCP, streamable-HTTP, 15 `@mcp.tool`): `mcp_server/planner_mcp_server.py` (`mcp.run(...):154`)
 - Schema (7 tables + pgvector): `lakebase.py:315` (`ensure_all_tables`); DDL in `sql/`
+- App analytics → Delta: `analytics.py` (`log_event` → Statement Execution → `app_events`); `notebooks/app_analytics.py` (Spark → `app_analytics` gold + charts)
 - Constraint handling: `_maybe_decode:56`, `_try_ddl:122`, `scripts/enrich_destinations.py`
 - Requirements traceability: `docs/capstone_requirements_mapping.md`
 
@@ -125,6 +127,8 @@ The agent both **retrieves** (search / weather / air-quality tools) and **writes
 - `embeddings.py` / `embedding_job.py` — chunk + embed helpers
 - `clients/` — Open-Meteo (geocoding/weather/air-quality) + Wikimedia adapters
 - `notebooks/ingest_place_embeddings.py` — the Spark pipeline
+- `analytics.py` — app-usage events → Unity Catalog Delta (`app_events`)
+- `notebooks/app_analytics.py` — Spark analytics → Delta gold (`app_analytics`) + charts
 - `mcp_server/` — FastMCP server + Agent Bricks system prompt + setup
 - `scripts/enrich_destinations.py` — off-platform Wikimedia enrichment
 - `tests/test_planner_tools.py` — integration smoke test

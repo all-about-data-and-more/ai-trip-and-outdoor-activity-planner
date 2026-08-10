@@ -3,7 +3,7 @@
 A traceability matrix so a reviewer (or the AI grader) can verify every required component in one
 pass. Each row names the exact file + symbol that satisfies it.
 
-## The 5 mandatory bootcamp components
+## The 6 mandatory bootcamp components
 
 ### 1. A data pipeline in Spark
 - **`notebooks/ingest_place_embeddings.py`** — a Spark job that reads raw place/attraction/note text
@@ -43,6 +43,15 @@ Four **key-less** integrations (no secrets needed), each an adapter in `clients/
     (with a deterministic keyword-routing fallback if the endpoint can't tool-call).
   - **FastMCP server** — `mcp_server/planner_mcp_server.py`: exposes the tools over MCP for a
     Databricks **Agent Bricks** agent (see `mcp_server/agent/agent_setup.md`).
+
+### 6. Analytics inside a Delta table about your app
+- **`analytics.py`** — the app logs usage events (trip created, destination added, itinerary
+  generated, reschedule, packing built, search, agent chat) into a Unity Catalog **Delta** table
+  `workspace.trip_planner.app_events` via the Databricks **SQL Statement Execution API**
+  (fire-and-forget, best-effort — never blocks a request). Wired into the routes in `app.py`.
+- **`notebooks/app_analytics.py`** — a **Spark** notebook reads the Delta events table, computes
+  usage analytics (event mix, daily activity, an engagement funnel, top users) with charts, and
+  writes a governed **Delta gold** table `workspace.trip_planner.app_analytics`.
 
 ## The project's own "Agent capabilities" spec
 
