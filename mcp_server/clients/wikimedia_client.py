@@ -47,7 +47,8 @@ _EXCLUDE_KEYWORDS = (
     "disaster", "ward,", "district,", "line (", "high school",
     # events / disasters / non-places that geosearch sometimes returns
     "fire", "revolt", "rebellion", "battle of", "riot", "massacre",
-    "earthquake", "flood", "war", "siege", "uprising",
+    "earthquake", "flood", "war", "siege", "uprising", "raid on",
+    "raid (", "expedition", "campaign", "shipwreck", "sinking of",
 )
 
 
