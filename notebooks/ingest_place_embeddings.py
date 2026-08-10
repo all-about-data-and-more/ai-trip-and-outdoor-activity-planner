@@ -130,11 +130,17 @@ print(f"{chunks.count()} chunks")
 
 # COMMAND ----------
 
+# DBTITLE 1,Cell 9
+import os
+
 _model = None
 
 def _get_model():
     global _model
     if _model is None:
+        # Set cache to /tmp (writable on Serverless executors)
+        os.environ['HF_HOME'] = '/tmp/huggingface_cache'
+        os.environ['TRANSFORMERS_CACHE'] = '/tmp/huggingface_cache'
         from sentence_transformers import SentenceTransformer
         _model = SentenceTransformer(EMBEDDING_MODEL_NAME)
     return _model
