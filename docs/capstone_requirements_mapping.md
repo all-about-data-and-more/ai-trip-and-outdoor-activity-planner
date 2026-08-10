@@ -46,12 +46,13 @@ Four **key-less** integrations (no secrets needed), each an adapter in `clients/
 
 ### 6. Analytics inside a Delta table about your app
 - **`analytics.py`** — the app logs usage events (trip created, destination added, itinerary
-  generated, reschedule, packing built, search, agent chat) into a Unity Catalog **Delta** table
-  `workspace.trip_planner.app_events` via the Databricks **SQL Statement Execution API**
-  (fire-and-forget, best-effort — never blocks a request). Wired into the routes in `app.py`.
-- **`notebooks/app_analytics.py`** — a **Spark** notebook reads the Delta events table, computes
-  usage analytics (event mix, daily activity, an engagement funnel, top users) with charts, and
-  writes a governed **Delta gold** table `workspace.trip_planner.app_analytics`.
+  generated, reschedule, packing built, search, agent chat) into the Lakebase `app_events` table
+  (fire-and-forget, best-effort — never blocks a request; same reliable write path as every other
+  app write). Wired into the routes in `app.py`.
+- **`notebooks/app_analytics.py`** — a **Spark** notebook reads `app_events` from Lakebase via JDBC,
+  mirrors it into a **Delta** bronze table (`workspace.trip_planner.app_events_delta`), and computes
+  usage analytics (event mix, daily activity, an engagement funnel, top users) with charts into a
+  governed **Delta gold** table (`workspace.trip_planner.app_analytics`).
 
 ## The project's own "Agent capabilities" spec
 

@@ -17,9 +17,9 @@
   table; see `spark_pipeline_and_serverless.md`.
 - **Agent (Phase 2)** — `agent.py` (in-app Foundation Model tool-calling) + `mcp_server/` (FastMCP
   for Agent Bricks), both over `planner_tools.py`.
-- **Analytics (`analytics.py` + `notebooks/app_analytics.py`)** — the app logs usage events to a
-  Unity Catalog **Delta** table via the SQL Statement Execution API; a Spark notebook turns them into
-  a Delta gold analytics table with charts.
+- **Analytics (`analytics.py` + `notebooks/app_analytics.py`)** — the app logs usage events to
+  Lakebase `app_events`; a Spark notebook reads them via JDBC and writes **Delta** bronze + gold
+  analytics tables with charts.
 
 ## Request flow — "add a destination"
 

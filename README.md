@@ -37,8 +37,8 @@ deployed and driving the same tool layer.
 - 🔎 **Semantic search** — pgvector cosine search over embedded destinations/attractions/notes.
 - 💬 **Two AI agents, one tool layer** — an in-app chat agent and an Agent Bricks agent over MCP.
 - ⬇️ **Export** — download the itinerary + packing list as Markdown.
-- 📊 **Usage analytics** — app events logged to a Unity Catalog Delta table, with a Spark notebook
-  that computes an engagement funnel and event mix into a Delta gold table.
+- 📊 **Usage analytics** — app events logged to Lakebase, with a Spark notebook that reads them
+  (JDBC) and computes an engagement funnel and event mix into Delta bronze + gold tables.
 
 ## The 6 required capstone components
 
@@ -49,7 +49,7 @@ deployed and driving the same tool layer.
 | **3. Unstructured-data processing** | Descriptions, attraction text, and notes chunked + embedded (384-dim MiniLM) into `place_embeddings` (pgvector). |
 | **4. Databricks App with a frontend** | [`app.py`](app.py) + [`templates/index.html`](templates/index.html), served as a Databricks App. |
 | **5. Agent that retrieves AND writes** | [`planner_tools.py`](planner_tools.py) — pgvector retrieval **and** DB writes (itinerary/reschedule/packing), via an in-app agent and a FastMCP/Agent Bricks agent. |
-| **6. Analytics in a Delta table about the app** | [`analytics.py`](analytics.py) logs usage events to a Unity Catalog **Delta** table; [`notebooks/app_analytics.py`](notebooks/app_analytics.py) computes usage analytics (event mix, funnel, daily activity) into a **Delta gold** table with charts. |
+| **6. Analytics in a Delta table about the app** | [`analytics.py`](analytics.py) logs usage events to Lakebase `app_events`; [`notebooks/app_analytics.py`](notebooks/app_analytics.py) reads them with Spark (JDBC) and writes **Delta** bronze + gold analytics (event mix, funnel, daily activity) with charts. |
 
 Full traceability: [`docs/capstone_requirements_mapping.md`](docs/capstone_requirements_mapping.md).
 
