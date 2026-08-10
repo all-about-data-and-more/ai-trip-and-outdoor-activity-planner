@@ -41,6 +41,7 @@ ITINERARY_ITEMS_TABLE = os.environ.get("ITINERARY_ITEMS_TABLE", "itinerary_items
 WEATHER_SNAPSHOTS_TABLE = os.environ.get("WEATHER_SNAPSHOTS_TABLE", "weather_snapshots")
 PACKING_ITEMS_TABLE = os.environ.get("PACKING_ITEMS_TABLE", "packing_items")
 PLACE_EMBEDDINGS_TABLE = os.environ.get("PLACE_EMBEDDINGS_TABLE", "place_embeddings")
+APP_EVENTS_TABLE = os.environ.get("APP_EVENTS_TABLE", "app_events")
 
 # 384 = sentence-transformers/all-MiniLM-L6-v2 output size (see embeddings.py).
 EMBEDDING_DIM = int(os.environ.get("PLANNER_EMBEDDING_DIM", "384"))
@@ -312,6 +313,25 @@ def ensure_place_embeddings_table(
     _try_ddl(f"CREATE INDEX IF NOT EXISTS idx_{table}_trip_id ON {table} (trip_id)")
 
 
+def ensure_app_events_table(table: str = APP_EVENTS_TABLE) -> None:
+    """Raw app-usage events (trip created, itinerary generated, agent chat, …).
+    The Spark analytics notebook reads this via JDBC and writes Delta analytics."""
+    run_write(
+        f"""
+        CREATE TABLE IF NOT EXISTS {table} (
+            id         TEXT PRIMARY KEY,
+            event_type TEXT NOT NULL,
+            trip_id    TEXT,
+            user_email TEXT,
+            detail     TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+        """
+    )
+    _try_ddl(f"CREATE INDEX IF NOT EXISTS idx_{table}_type ON {table} (event_type)")
+    _try_ddl(f"CREATE INDEX IF NOT EXISTS idx_{table}_created ON {table} (created_at)")
+
+
 def ensure_all_tables() -> None:
     """Create every table in dependency order. Idempotent — safe to call on
     each request/startup."""
@@ -323,3 +343,4 @@ def ensure_all_tables() -> None:
     ensure_weather_snapshots_table()
     ensure_packing_items_table()
     ensure_place_embeddings_table()
+    ensure_app_events_table()
