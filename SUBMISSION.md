@@ -138,7 +138,17 @@ The agent both **retrieves** (search / weather / air-quality tools) and **writes
 
 ## Screenshots (evidence)
 
-See `docs/screenshots/`:
-- `app.png` — the trip planner UI (trip, destination, activities)
-- `itinerary.png` — a weather-aware itinerary + packing list
-- `agent.png` — the Agent Bricks agent calling an MCP tool (retrieve + write over MCP)
+See `docs/screenshots/` — each mapped to the component it proves:
+
+| File | Shows | Component |
+|------|-------|-----------|
+| `01_app.png` | App frontend: trips, destinations (Wikimedia), activities | 4 |
+| `02_weather_air.png` | Live weather + air quality (Open-Meteo) | 2 |
+| `03_itinerary.png` | Weather-aware itinerary (indoor picks on rain; outdoor flagged) | 5 (writes) |
+| `04_search.png` | Semantic activity search over pgvector | 3 + 5 (retrieval) |
+| `05_agent_chat.png` | In-app chat agent (tool-calling) — surface #1 | 5 |
+| `06_agent_mcp.png` | Agent Bricks agent calling `search_activities` over MCP — surface #2 | 5 |
+| `07_spark_pipeline_1.png` / `_2.png` | Spark `pandas_udf` embeds chunks → governed Delta gold | 1 + 3 |
+| `08_analytics.png` | Spark writes `app_analytics` Delta gold (funnel + events-by-type) | 6 |
+| `09_apps_overview.png` | All three apps deployed and ACTIVE | deployment |
+| `10_packing.png` | Agent-built packing list | 5 |

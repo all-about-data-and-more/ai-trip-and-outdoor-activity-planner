@@ -22,3 +22,4 @@ Thumbs.db
 # Model / HF caches (the sentence-transformers model downloads at runtime)
 .cache/
 hf_cache/
+AI_Trip_Planner_Submission.pdf
