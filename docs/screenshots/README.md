@@ -1,22 +1,12 @@
-# Screenshots
+# Screenshots — the app &amp; agents working
 
-Drop three PNGs here with these exact names — the top-level README references them:
+Evidence that the deployed app and both agent surfaces work end-to-end.
 
-| File | What to capture |
-|---|---|
-| `app.png` | The main trip planner UI — a trip selected, with a destination and its activities visible. |
-| `itinerary.png` | The generated **itinerary + packing list** (ideally showing the weather strip and a "rescheduled" badge, or the explain panel). |
-| `agent.png` | The **Agent Bricks agent** in the AI Playground calling an MCP tool (the `Tools (1)` view with a tool result), **or** the deployed agent's chat answering a planning request. |
+| File | What it shows |
+|------|---------------|
+| `app.png` | The trip planner UI — a trip selected with a destination and its activities. |
+| `itinerary.png` | A weather-aware **itinerary + packing list** generated for the trip. |
+| `agent.png` | The **Agent Bricks agent** (AI Playground) calling an MCP tool — the tool call, its JSON result, and the agent's natural-language answer (retrieves + writes over MCP). |
 
-Tips for good screenshots:
-- Use a real trip with real attractions (run `scripts/enrich_destinations.py` first so destinations
-  have activities).
-- Crop to the relevant panel; keep them readable at ~1200px wide.
-- PNG, ideally under ~500 KB each.
-
-Once added:
-```bash
-git add docs/screenshots/*.png
-git commit -m "docs: add app screenshots"
-git push
-```
+Captured against real, enriched destinations (run `scripts/enrich_destinations.py` first so
+destinations have attractions).
