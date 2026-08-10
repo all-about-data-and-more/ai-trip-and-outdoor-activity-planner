@@ -37,3 +37,11 @@ env:
     value: "0.1"
   - name: AQI_UNHEALTHY_THRESHOLD
     value: "100"
+
+  # App-usage analytics are written to a Unity Catalog Delta table
+  # (<catalog>.<schema>.app_events) via a SQL warehouse. The warehouse is
+  # auto-discovered; set DATABRICKS_WAREHOUSE_ID to pin a specific one.
+  - name: ANALYTICS_CATALOG
+    value: "workspace"
+  - name: ANALYTICS_SCHEMA
+    value: "trip_planner"

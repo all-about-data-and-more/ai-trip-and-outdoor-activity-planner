@@ -27,6 +27,7 @@ except ImportError:
     pass
 
 import agent
+import analytics
 import embeddings
 import embedding_job
 import lakebase
@@ -94,11 +95,12 @@ def post_trip():
     title = (body.get("title") or "").strip()
     if not title:
         return jsonify({"error": "'title' is required"}), 400
+    email = _current_user_email()
     trip = planner_tools.create_trip(
-        _current_user_email(), title,
-        start_date=body.get("start_date"), end_date=body.get("end_date"),
-        notes=body.get("notes"),
+        email, title, start_date=body.get("start_date"),
+        end_date=body.get("end_date"), notes=body.get("notes"),
     )
+    analytics.log_event("trip_created", trip_id=trip["id"], user_email=email, detail=title)
     return jsonify(trip), 201
 
 
@@ -150,6 +152,7 @@ def post_destination(trip_id):
         )
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
+    analytics.log_event("destination_added", trip_id=trip_id, detail=dest.get("name"))
     return jsonify(dest), 201
 
 
@@ -233,6 +236,7 @@ def search():
         query, trip_id=body.get("trip_id"),
         top_k=int(body.get("top_k", 8)), outdoor_only=body.get("outdoor_only"),
     )
+    analytics.log_event("search", trip_id=body.get("trip_id"), detail=query)
     return jsonify(result)
 
 
@@ -248,13 +252,18 @@ def get_itinerary(trip_id):
 def post_generate_itinerary(trip_id):
     body = request.json if request.is_json else {}
     result = planner_tools.generate_itinerary(trip_id, items_per_day=int(body.get("items_per_day", 3)))
+    if result.get("status") != "error":
+        analytics.log_event("itinerary_generated", trip_id=trip_id,
+                            detail=str(result.get("items_created")))
     status = 400 if result.get("status") == "error" else 200
     return jsonify(result), status
 
 
 @app.route("/trips/<trip_id>/reschedule", methods=["POST"])
 def post_reschedule(trip_id):
-    return jsonify(planner_tools.reschedule_for_weather(trip_id))
+    result = planner_tools.reschedule_for_weather(trip_id)
+    analytics.log_event("reschedule", trip_id=trip_id, detail=str(result.get("changes_made")))
+    return jsonify(result)
 
 
 @app.route("/trips/<trip_id>/itinerary/reorder", methods=["POST"])
@@ -270,7 +279,9 @@ def get_packing(trip_id):
 
 @app.route("/trips/<trip_id>/packing", methods=["POST"])
 def post_packing(trip_id):
-    return jsonify(planner_tools.build_packing_list(trip_id))
+    result = planner_tools.build_packing_list(trip_id)
+    analytics.log_event("packing_built", trip_id=trip_id, detail=str(result.get("items_created")))
+    return jsonify(result)
 
 
 @app.route("/trips/<trip_id>/explain", methods=["GET"])
@@ -322,6 +333,7 @@ def agent_chat():
     if not message:
         return jsonify({"error": "'message' is required"}), 400
     result = agent.chat(message, trip_id=body.get("trip_id"), history=body.get("history"))
+    analytics.log_event("agent_chat", trip_id=body.get("trip_id"), detail=message[:200])
     return jsonify(result)
 
 
