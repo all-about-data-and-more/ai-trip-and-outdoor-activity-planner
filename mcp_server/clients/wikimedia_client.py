@@ -31,7 +31,7 @@ _TIMEOUT = int(os.environ.get("WIKIMEDIA_HTTP_TIMEOUT", "12"))
 _USER_AGENT = os.environ.get(
     "WIKIMEDIA_USER_AGENT",
     "AI-Trip-Planner/1.0 (bootcamp capstone; "
-    "https://github.com/modern-data-engineering-lab/ai-trip-and-outdoor-activity-planner)",
+    "https://github.com/all-about-data-and-more/ai-trip-and-outdoor-activity-planner)",
 )
 
 _HEADERS = {"User-Agent": _USER_AGENT, "Accept": "application/json"}

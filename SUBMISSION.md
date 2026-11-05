@@ -10,7 +10,7 @@ its weather-based decisions — grounded in real forecasts and its own vector se
 
 ## Links &amp; deployed apps
 
-- **GitHub repo:** https://github.com/modern-data-engineering-lab/ai-trip-and-outdoor-activity-planner
+- **GitHub repo:** https://github.com/all-about-data-and-more/ai-trip-and-outdoor-activity-planner
 - **Main app** (`ai-trip-planner-app`): https://ai-trip-planner-app-7474650707148987.aws.databricksapps.com
 - **MCP server app** (`mcp-trip-planner`): https://mcp-trip-planner-7474650707148987.aws.databricksapps.com
   — MCP endpoint: `…/mcp`
